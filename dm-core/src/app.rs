@@ -1,7 +1,7 @@
 use std::{io, time::Instant};
 
-use crate::ui::screens::splash::SplashScreen;
 use anyhow::Result;
+use dm_ui::screens::splash::SplashScreen;
 use ratatui::{Frame, Terminal, backend::CrosstermBackend};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
