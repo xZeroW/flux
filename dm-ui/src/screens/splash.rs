@@ -1,31 +1,25 @@
+use crate::ascii_art::FLUX_LOGO;
 use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    buffer::Buffer,
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Style},
+    widgets::{Paragraph, Widget},
 };
 
-pub struct SplashScreen {}
+pub struct SplashScreen;
 
-impl Default for SplashScreen {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+impl Widget for SplashScreen {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let [_, content_area, _] = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(7),
+            Constraint::Fill(1),
+        ])
+        .areas(area);
 
-impl SplashScreen {
-    pub fn new() -> Self {
-        Self {}
-    }
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(25),
-                Constraint::Length(12),
-                Constraint::Length(1),
-                Constraint::Length(2),
-                Constraint::Length(2),
-                Constraint::Percentage(25),
-            ])
-            .split(area);
+        Paragraph::new(format!("{FLUX_LOGO}\nTUI DOWNLOAD MANAGER"))
+            .centered()
+            .style(Style::default().fg(Color::Cyan))
+            .render(content_area, buf);
     }
 }
