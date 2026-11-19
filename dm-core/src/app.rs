@@ -10,11 +10,12 @@ use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct App {
     current_screen: Screen,
     exit: bool,
+    splash_started: Instant,
 }
 
 impl Default for App {
@@ -22,6 +23,7 @@ impl Default for App {
         Self {
             current_screen: Screen::default(),
             exit: false,
+            splash_started: Instant::now(),
         }
     }
 }
@@ -29,16 +31,17 @@ impl Default for App {
 impl App {
     pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut events = EventStream::new();
-        let splash_timer = tokio::time::sleep(Duration::from_secs(2));
-        tokio::pin!(splash_timer);
+        let mut animation_tick = tokio::time::interval(Duration::from_millis(50));
 
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
 
             tokio::select! {
                 event = events.next() => self.handle_event(event.transpose()?)?,
-                _ = &mut splash_timer, if matches!(&self.current_screen, Screen::Splash) => {
-                    self.current_screen = Screen::Downloads;
+                _ = animation_tick.tick(), if matches!(&self.current_screen, Screen::Splash) => {
+                    if self.splash_started.elapsed() >= Duration::from_secs(2) {
+                        self.current_screen = Screen::Downloads;
+                    }
                 }
             }
         }
@@ -47,7 +50,10 @@ impl App {
 
     fn draw(&self, frame: &mut Frame) {
         match &self.current_screen {
-            Screen::Splash => frame.render_widget(SplashScreen, frame.area()),
+            Screen::Splash => frame.render_widget(
+                SplashScreen::new(self.splash_started.elapsed().as_secs_f32()),
+                frame.area(),
+            ),
             Screen::Downloads => {
                 let [content_area, footer_area] = Layout::default()
                     .direction(Direction::Vertical)
