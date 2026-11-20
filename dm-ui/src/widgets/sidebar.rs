@@ -40,44 +40,28 @@ impl Widget for Sidebar {
                 "  GENERAL",
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            item_line("Downloads", SidebarItem::Downloads, self.selected, true),
-            item_line("History", SidebarItem::History, self.selected, false),
-            item_line("Queue", SidebarItem::Queue, self.selected, false),
-            item_line("Settings", SidebarItem::Settings, self.selected, false),
+            item_line("Downloads", SidebarItem::Downloads, self.selected),
+            item_line("History", SidebarItem::History, self.selected),
+            item_line("Queue", SidebarItem::Queue, self.selected),
+            item_line("Settings", SidebarItem::Settings, self.selected),
             Line::from(""),
             Line::from(Span::styled(
                 "  PROVIDERS",
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            item_line("MediaFire", SidebarItem::MediaFire, self.selected, false),
-            item_line("MEGA", SidebarItem::Mega, self.selected, false),
-            item_line(
-                "Google Drive",
-                SidebarItem::GoogleDrive,
-                self.selected,
-                false,
-            ),
-            item_line("Torrents", SidebarItem::Torrents, self.selected, false),
+            item_line("MediaFire", SidebarItem::MediaFire, self.selected),
+            item_line("MEGA", SidebarItem::Mega, self.selected),
+            item_line("Google Drive", SidebarItem::GoogleDrive, self.selected),
+            item_line("Torrents", SidebarItem::Torrents, self.selected),
         ];
 
         Paragraph::new(lines).render(inner, buf);
     }
 }
 
-fn item_line(
-    label: &str,
-    item: SidebarItem,
-    selected: SidebarItem,
-    general: bool,
-) -> Line<'static> {
+fn item_line(label: &str, item: SidebarItem, selected: SidebarItem) -> Line<'static> {
     let is_selected = item == selected;
-    let prefix = if is_selected {
-        "  ▸ "
-    } else if general {
-        "  "
-    } else {
-        "    "
-    };
+    let prefix = if is_selected { "  ▸ " } else { "    " };
     let style = if is_selected {
         Style::default()
             .fg(Color::Cyan)

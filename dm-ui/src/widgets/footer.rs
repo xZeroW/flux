@@ -19,6 +19,8 @@ impl Widget for Footer {
             Span::raw(" Details   "),
             Span::styled("[?]", Style::default().fg(Color::Cyan)),
             Span::raw(" Help   "),
+            Span::styled("[s]", Style::default().fg(Color::Cyan)),
+            Span::raw(" Settings   "),
             Span::styled("[q]", Style::default().fg(Color::Cyan)),
             Span::raw(" Quit"),
         ]))

@@ -6,7 +6,10 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 crossterm.workspace = true
+directories = "6.0"
 dm-ui = { path = "../dm-ui" }
 futures-util = "0.3"
 ratatui.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
 tokio = { version = "1.54.1", features = ["full"] }
