@@ -102,7 +102,10 @@ impl DownloadProvider for TorrentProvider {
         loop {
             tokio::select! {
                 changed = paused.changed() => {
-                    changed.context("download pause channel closed")?;
+                    if changed.is_err() {
+                        session.delete(handle.id().into(), false).await?;
+                        return Ok(());
+                    }
                     let want_paused = *paused.borrow_and_update();
                     if want_paused && !handle.is_paused() {
                         session.pause(&handle).await?;

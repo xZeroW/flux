@@ -22,6 +22,10 @@ impl App {
     }
 
     fn handle_key_pressed(&mut self, key_event: KeyEvent) -> Result<()> {
+        if self.confirm_delete.is_some() {
+            self.handle_confirm_delete_key(key_event.code);
+            return Ok(());
+        }
         if self.input_popup.is_some() {
             self.handle_input_key(key_event.code);
             return Ok(());
@@ -43,6 +47,19 @@ impl App {
                     && self.focus == Focus::Content =>
             {
                 self.downloads.toggle_pause(self.selected_download);
+            }
+            KeyCode::Char('d')
+                if matches!(self.current_screen, Screen::Downloads)
+                    && self.focus == Focus::Content =>
+            {
+                self.remove_selected_download(false);
+            }
+            KeyCode::Char('D')
+                if matches!(self.current_screen, Screen::Downloads)
+                    && self.focus == Focus::Content
+                    && self.selected_download < self.downloads.entries().len() =>
+            {
+                self.confirm_delete = Some(self.selected_download);
             }
             KeyCode::Tab => {
                 self.focus = match self.focus {
@@ -110,6 +127,26 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn handle_confirm_delete_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                if let Some(index) = self.confirm_delete.take() {
+                    self.selected_download = index;
+                    self.remove_selected_download(true);
+                }
+            }
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => self.confirm_delete = None,
+            _ => {}
+        }
+    }
+
+    fn remove_selected_download(&mut self, delete_file: bool) {
+        self.downloads.remove(self.selected_download, delete_file);
+        self.selected_download = self
+            .selected_download
+            .min(self.downloads.entries().len().saturating_sub(1));
     }
 
     fn handle_command_palette_key(&mut self, key: KeyCode) {

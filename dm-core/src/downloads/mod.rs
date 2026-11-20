@@ -18,18 +18,19 @@ const NO_SPEED: &str = "—";
 
 enum DownloadEvent {
     Progress {
-        index: usize,
+        id: u64,
         received: u64,
         total: Option<u64>,
     },
     Finished {
-        index: usize,
+        id: u64,
         status: DownloadStatus,
     },
 }
 
 #[derive(Default)]
 struct Task {
+    id: u64,
     control: Option<watch::Sender<bool>>,
     speed_sample: Option<(Instant, u64)>,
 }
@@ -41,6 +42,7 @@ pub struct DownloadManager {
     events_tx: UnboundedSender<DownloadEvent>,
     events_rx: UnboundedReceiver<DownloadEvent>,
     last_persist: Instant,
+    next_task_id: u64,
 }
 
 impl DownloadManager {
@@ -52,8 +54,14 @@ impl DownloadManager {
                 entry.status = DownloadStatus::Paused;
             }
         }
-        let tasks = entries.iter().map(|_| Task::default()).collect();
+        let tasks: Vec<Task> = (0..entries.len() as u64)
+            .map(|id| Task {
+                id,
+                ..Task::default()
+            })
+            .collect();
         let manager = Self {
+            next_task_id: tasks.len() as u64,
             entries,
             tasks,
             status: String::new(),
@@ -85,21 +93,35 @@ impl DownloadManager {
     fn handle_event(&mut self, event: DownloadEvent) {
         match event {
             DownloadEvent::Progress {
-                index,
+                id,
                 received,
                 total,
-            } => self.record_progress(index, received, total),
-            DownloadEvent::Finished { index, status } => {
+            } => {
+                if let Some(index) = self.index_of(id) {
+                    self.record_progress(index, received, total);
+                }
+            }
+            DownloadEvent::Finished { id, status } => {
+                let Some(index) = self.index_of(id) else {
+                    return;
+                };
                 let Some(entry) = self.entries.get_mut(index) else {
                     return;
                 };
                 entry.status = status.clone();
                 entry.speed = NO_SPEED.to_owned();
                 self.status = format!("{}: {status}", entry.name);
-                self.tasks[index] = Task::default();
+                self.tasks[index] = Task {
+                    id,
+                    ..Task::default()
+                };
                 self.save();
             }
         }
+    }
+
+    fn index_of(&self, id: u64) -> Option<usize> {
+        self.tasks.iter().position(|task| task.id == id)
     }
 
     fn record_progress(&mut self, index: usize, received: u64, total: Option<u64>) {
@@ -167,7 +189,12 @@ impl DownloadManager {
             url: input,
             destination: destination.display().to_string(),
         });
-        self.tasks.push(Task::default());
+        let id = self.next_task_id;
+        self.next_task_id += 1;
+        self.tasks.push(Task {
+            id,
+            ..Task::default()
+        });
         self.spawn_download(self.entries.len() - 1);
         self.save();
     }
@@ -200,7 +227,26 @@ impl DownloadManager {
         self.save();
     }
 
+    pub fn remove(&mut self, index: usize, delete_file: bool) {
+        if index >= self.entries.len() {
+            return;
+        }
+        self.tasks.remove(index);
+        let entry = self.entries.remove(index);
+        self.status = if delete_file {
+            match delete_files(&entry) {
+                Ok(true) => format!("Deleted {} from disk", entry.name),
+                Ok(false) => format!("Removed {} (no file found on disk)", entry.name),
+                Err(error) => format!("Removed {} but could not delete it: {error:#}", entry.name),
+            }
+        } else {
+            format!("Removed {}", entry.name)
+        };
+        self.save();
+    }
+
     fn spawn_download(&mut self, index: usize) {
+        let id = self.tasks[index].id;
         let (control, paused) = watch::channel(false);
         self.tasks[index].control = Some(control);
 
@@ -216,7 +262,7 @@ impl DownloadManager {
             let progress_tx = tx.clone();
             let progress: ProgressReporter = Arc::new(move |progress: DownloadProgress| {
                 let _ = progress_tx.send(DownloadEvent::Progress {
-                    index,
+                    id,
                     received: progress.received_bytes,
                     total: progress.total_bytes,
                 });
@@ -229,7 +275,7 @@ impl DownloadManager {
                 Ok(()) => DownloadStatus::Complete,
                 Err(error) => DownloadStatus::Failed(format!("{error:#}")),
             };
-            let _ = tx.send(DownloadEvent::Finished { index, status });
+            let _ = tx.send(DownloadEvent::Finished { id, status });
         });
     }
 
@@ -270,6 +316,42 @@ impl Drop for DownloadManager {
     fn drop(&mut self) {
         let _ = store::save(&self.entries);
     }
+}
+
+fn delete_files(entry: &DownloadEntry) -> anyhow::Result<bool> {
+    let destination = Path::new(&entry.destination);
+    let mut removed = false;
+    let mut remove_file = |path: &Path| -> std::io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                removed = true;
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    };
+
+    if destination.is_dir() {
+        let mut components = Path::new(&entry.name).components();
+        let (Some(std::path::Component::Normal(name)), None) =
+            (components.next(), components.next())
+        else {
+            return Ok(false);
+        };
+        let target = destination.join(name);
+        if target.is_dir() {
+            std::fs::remove_dir_all(&target)?;
+            return Ok(true);
+        }
+        remove_file(&target)?;
+    } else {
+        remove_file(destination)?;
+        let mut partial = destination.as_os_str().to_os_string();
+        partial.push(".part");
+        remove_file(Path::new(&partial))?;
+    }
+    Ok(removed)
 }
 
 fn format_speed(bytes_per_second: f64) -> String {

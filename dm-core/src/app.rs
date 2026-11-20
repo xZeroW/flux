@@ -9,6 +9,7 @@ use dm_ui::screens::{
 };
 use dm_ui::widgets::{
     command_palette::CommandPalette,
+    confirm_popup::ConfirmPopup,
     footer::Footer,
     input_popup::InputPopup,
     sidebar::{Sidebar, SidebarItem},
@@ -41,6 +42,7 @@ pub struct App {
     command_query: String,
     selected_command: usize,
     input_popup: Option<ProviderInput>,
+    confirm_delete: Option<usize>,
     downloads: DownloadManager,
 }
 
@@ -71,6 +73,7 @@ impl App {
             command_query: String::new(),
             selected_command: 0,
             input_popup: None,
+            confirm_delete: None,
             downloads: DownloadManager::new()?,
         })
     }
@@ -165,6 +168,21 @@ impl App {
                     query: &self.command_query,
                     commands: &commands,
                     selected: self.selected_command,
+                },
+                frame.area(),
+            );
+        }
+        if let Some(entry) = self
+            .confirm_delete
+            .and_then(|i| self.downloads.entries().get(i))
+        {
+            frame.render_widget(
+                ConfirmPopup {
+                    title: "Delete download",
+                    message: &format!(
+                        "Remove \"{}\" from the list and delete its file from disk?",
+                        entry.name
+                    ),
                 },
                 frame.area(),
             );
