@@ -256,6 +256,14 @@ impl App {
             .collect();
         let items = [
             MenuItem {
+                label: "Browse files".to_owned(),
+                value: if account.is_logged_in() {
+                    String::new()
+                } else {
+                    "login required".to_owned()
+                },
+            },
+            MenuItem {
                 label: if account.is_logged_in() {
                     "Logout"
                 } else {
@@ -281,14 +289,6 @@ impl App {
             MenuItem {
                 label: "Client secret".to_owned(),
                 value: masked(&account.client_secret),
-            },
-            MenuItem {
-                label: "Browse files".to_owned(),
-                value: if account.is_logged_in() {
-                    String::new()
-                } else {
-                    "login required".to_owned()
-                },
             },
         ];
         let view = if self.browsing {

@@ -328,26 +328,26 @@ impl App {
         };
         let logged_in = state.account.is_logged_in();
         match self.selected_menu {
-            0 if logged_in => self.cloud.logout(index),
-            0 => self.cloud.login(index),
-            1 => {
+            0 if logged_in => {
+                self.browsing = true;
+                self.selected_file = 0;
+                self.cloud.refresh(index);
+            }
+            1 if logged_in => self.cloud.logout(index),
+            1 => self.cloud.login(index),
+            2 => {
                 self.input_popup = Some(ProviderInput {
                     target: InputTarget::ClientId(index),
                     title: "OAuth client ID".to_owned(),
                     value: String::new(),
                 });
             }
-            2 => {
+            3 => {
                 self.input_popup = Some(ProviderInput {
                     target: InputTarget::ClientSecret(index),
                     title: "OAuth client secret".to_owned(),
                     value: String::new(),
                 });
-            }
-            3 if logged_in => {
-                self.browsing = true;
-                self.selected_file = 0;
-                self.cloud.refresh(index);
             }
             _ => {}
         }
