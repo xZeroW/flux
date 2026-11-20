@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use super::{Account, CloudFile, CloudProvider, OpenUrl, oauth};
+use super::{Account, AccountField, CloudFile, CloudProvider, FieldSpec, OpenUrl, oauth};
 use crate::{
     DestinationKind, DownloadProgress, DownloadProvider, DownloadRequest, ProgressReporter,
     ProviderCommand, ResolvedDownload, direct_download,
@@ -62,10 +62,6 @@ async fn access_token(account: &Account) -> Result<String> {
     let expires = Instant::now() + Duration::from_secs(response.expires_in.saturating_sub(60));
     *cached = Some((response.access_token.clone(), expires));
     Ok(response.access_token)
-}
-
-pub fn download_input(file: &CloudFile) -> String {
-    format!("gdrive://{}/{}", file.id, file.name.replace('/', "_"))
 }
 
 #[async_trait::async_trait]
@@ -130,8 +126,30 @@ impl CloudProvider for GoogleDrive {
         "Google Drive"
     }
 
+    fn fields(&self) -> &'static [FieldSpec] {
+        &[
+            FieldSpec {
+                field: AccountField::ClientId,
+                label: "Client ID",
+            },
+            FieldSpec {
+                field: AccountField::ClientSecret,
+                label: "Client secret",
+            },
+        ]
+    }
+
+    fn is_configured(&self, account: &Account) -> bool {
+        !account.client_id.is_empty() && !account.client_secret.is_empty()
+    }
+
+    /// `gdrive://<file id>/<file name>`, understood by the download side above.
+    fn download_input(&self, file: &CloudFile) -> String {
+        format!("gdrive://{}/{}", file.id, file.name.replace('/', "_"))
+    }
+
     async fn login(&self, account: &Account, open_url: OpenUrl) -> Result<String> {
-        if !account.has_client() {
+        if !self.is_configured(account) {
             bail!("set the client ID and client secret first");
         }
         let login = oauth::LoopbackLogin::start(&ENDPOINTS, &account.client_id).await?;

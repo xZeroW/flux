@@ -63,7 +63,7 @@ impl Widget for ProviderScreen<'_> {
                     let marker = if index == *selected { "▸ " } else { "  " };
                     lines.push(Line::from(vec![
                         Span::styled(
-                            format!("{marker}{:<16}", item.label),
+                            format!("{marker}{:<22}", item.label),
                             highlight(index == *selected),
                         ),
                         Span::styled(item.value.clone(), hint_style),

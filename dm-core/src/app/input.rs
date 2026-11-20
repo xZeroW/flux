@@ -26,6 +26,10 @@ impl App {
             self.handle_confirm_delete_key(key_event.code);
             return Ok(());
         }
+        if self.cloud.picker.is_some() {
+            self.handle_picker_key(key_event.code);
+            return Ok(());
+        }
         if self.input_popup.is_some() {
             self.handle_input_key(key_event.code);
             return Ok(());
@@ -193,6 +197,52 @@ impl App {
         }
     }
 
+    fn handle_picker_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Esc => {
+                self.cloud.close_picker(false);
+            }
+            KeyCode::Enter => {
+                let picked = self.cloud.close_picker(true);
+                for (provider_id, input) in &picked {
+                    self.downloads.start_download(provider_id, input.clone());
+                }
+                if !picked.is_empty() {
+                    self.selected_download = self.downloads.entries().len().saturating_sub(1);
+                    self.current_screen = Screen::Downloads;
+                    self.sidebar_selection = SidebarItem::Downloads;
+                }
+            }
+            _ => {
+                let Some(picker) = self.cloud.picker.as_mut() else {
+                    return;
+                };
+                match key {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        picker.selected =
+                            (picker.selected + 1).min(picker.items.len().saturating_sub(1));
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        picker.selected = picker.selected.saturating_sub(1);
+                    }
+                    KeyCode::Char(' ') => {
+                        if let Some(checked) = picker.checked.get_mut(picker.selected) {
+                            *checked = !*checked;
+                        }
+                    }
+                    KeyCode::Char('a') => {
+                        let all = picker.checked.iter().all(|checked| *checked);
+                        picker
+                            .checked
+                            .iter_mut()
+                            .for_each(|checked| *checked = !all);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn handle_input_key(&mut self, key: KeyCode) {
         let Some(input) = self.input_popup.as_mut() else {
             return;
@@ -203,15 +253,18 @@ impl App {
                 if let Some(input) = self.input_popup.take() {
                     match input.target {
                         InputTarget::Download(provider_id) => {
-                            self.downloads.start_download(provider_id, input.value);
+                            let value = input.value.trim().to_owned();
+                            match dm_providers::find_provider(provider_id)
+                                .filter(|provider| provider.is_collection(&value))
+                            {
+                                Some(provider) => self.cloud.open_picker(provider, value),
+                                None => self.downloads.start_download(provider_id, value),
+                            }
                             self.selected_download =
                                 self.downloads.entries().len().saturating_sub(1);
                         }
-                        InputTarget::ClientId(index) => {
-                            self.cloud.set_client_id(index, input.value)
-                        }
-                        InputTarget::ClientSecret(index) => {
-                            self.cloud.set_client_secret(index, input.value)
+                        InputTarget::Field(index, field) => {
+                            self.cloud.set_field(index, field, input.value)
                         }
                     }
                 }
@@ -293,7 +346,7 @@ impl App {
         }
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                self.selected_menu = (self.selected_menu + 1).min(3)
+                self.selected_menu = (self.selected_menu + 1).min(self.provider_menu_len(index) - 1)
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.selected_menu = self.selected_menu.saturating_sub(1)
@@ -314,12 +367,18 @@ impl App {
         };
         let files = self.cloud.take_selected(index);
         for file in &files {
-            let input = dm_providers::cloud::gdrive::download_input(file);
+            let input = provider.download_input(file);
             self.downloads.start_download(provider.id(), input);
         }
         if !files.is_empty() {
             self.selected_download = self.downloads.entries().len().saturating_sub(1);
         }
+    }
+
+    fn provider_menu_len(&self, index: usize) -> usize {
+        2 + dm_providers::cloud::cloud_providers()
+            .get(index)
+            .map_or(0, |provider| provider.fields().len())
     }
 
     fn activate_provider_menu(&mut self, index: usize) {
@@ -335,21 +394,18 @@ impl App {
             }
             1 if logged_in => self.cloud.logout(index),
             1 => self.cloud.login(index),
-            2 => {
-                self.input_popup = Some(ProviderInput {
-                    target: InputTarget::ClientId(index),
-                    title: "OAuth client ID".to_owned(),
-                    value: String::new(),
-                });
+            row => {
+                let spec = dm_providers::cloud::cloud_providers()
+                    .get(index)
+                    .and_then(|provider| provider.fields().get(row.wrapping_sub(2)));
+                if let Some(spec) = spec {
+                    self.input_popup = Some(ProviderInput {
+                        target: InputTarget::Field(index, spec.field),
+                        title: spec.label.to_owned(),
+                        value: String::new(),
+                    });
+                }
             }
-            3 => {
-                self.input_popup = Some(ProviderInput {
-                    target: InputTarget::ClientSecret(index),
-                    title: "OAuth client secret".to_owned(),
-                    value: String::new(),
-                });
-            }
-            _ => {}
         }
     }
 }

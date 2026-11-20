@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 pub mod cloud;
 pub mod direct_download;
+pub mod mediafire;
 pub mod torrent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,16 @@ pub struct DownloadProgress {
     pub total_bytes: Option<u64>,
 }
 
+/// One downloadable file inside a link that points at several (e.g. a folder).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionItem {
+    /// Path shown to the user, relative to the collection root.
+    pub name: String,
+    pub size: Option<u64>,
+    /// A plain download input for this single file (see `resolve`).
+    pub input: String,
+}
+
 pub type ProgressReporter = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
 
 #[async_trait::async_trait]
@@ -46,6 +57,16 @@ pub trait DownloadProvider: Send + Sync {
     fn commands(&self) -> &'static [ProviderCommand];
 
     fn resolve(&self, input: &str) -> Result<ResolvedDownload, String>;
+
+    /// True when `input` points at several files that the user should pick from.
+    fn is_collection(&self, _input: &str) -> bool {
+        false
+    }
+
+    /// List the files behind a collection input.
+    async fn list_collection(&self, _input: &str) -> anyhow::Result<Vec<CollectionItem>> {
+        anyhow::bail!("{} has no file lists", self.name())
+    }
 
     async fn download(
         &self,
@@ -59,6 +80,7 @@ pub fn providers() -> &'static [&'static dyn DownloadProvider] {
         &direct_download::DirectDownloadProvider,
         &torrent::TorrentProvider,
         &cloud::gdrive::GoogleDrive,
+        &mediafire::MediaFire,
     ]
 }
 
@@ -115,7 +137,7 @@ mod tests {
     #[test]
     fn commands_are_filtered_by_name() {
         assert_eq!(commands_matching("TORR").len(), 1);
-        assert_eq!(commands_matching("").len(), 2); // cloud providers have no palette commands
+        assert_eq!(commands_matching("").len(), 3); // cloud providers have no palette commands
         assert!(commands_matching("zzz").is_empty());
     }
 }

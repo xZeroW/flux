@@ -94,7 +94,7 @@ impl DownloadEntry {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub fn format_bytes(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
     const GB: u64 = 1024 * MB;
     if bytes >= GB {

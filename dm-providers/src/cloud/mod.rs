@@ -20,16 +20,47 @@ pub struct CloudFile {
 pub struct Account {
     pub client_id: String,
     pub client_secret: String,
+    /// Opaque "you are logged in" credential returned by the provider's login.
     pub refresh_token: Option<String>,
+}
+
+/// An account setting the user can edit from the provider screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountField {
+    ClientId,
+    ClientSecret,
+}
+
+impl AccountField {
+    pub fn is_secret(self) -> bool {
+        matches!(self, Self::ClientSecret)
+    }
+
+    pub fn get(self, account: &Account) -> &str {
+        match self {
+            Self::ClientId => &account.client_id,
+            Self::ClientSecret => &account.client_secret,
+        }
+    }
+
+    pub fn set(self, account: &mut Account, value: String) {
+        let value = value.trim().to_owned();
+        match self {
+            Self::ClientId => account.client_id = value,
+            Self::ClientSecret => account.client_secret = value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FieldSpec {
+    pub field: AccountField,
+    pub label: &'static str,
 }
 
 impl Account {
     pub fn is_logged_in(&self) -> bool {
         self.refresh_token.is_some()
-    }
-
-    pub fn has_client(&self) -> bool {
-        !self.client_id.trim().is_empty() && !self.client_secret.trim().is_empty()
     }
 
     pub fn load(provider_id: &str) -> Result<Self> {
@@ -58,6 +89,15 @@ pub type OpenUrl = Box<dyn Fn(String) + Send + Sync>;
 pub trait CloudProvider: Send + Sync {
     fn id(&self) -> &'static str;
     fn name(&self) -> &'static str;
+
+    /// The settings this provider needs, in display order.
+    fn fields(&self) -> &'static [FieldSpec];
+
+    /// Whether all required settings are filled in so login can start.
+    fn is_configured(&self, account: &Account) -> bool;
+
+    /// The download input (see [`crate::DownloadProvider::resolve`]) for a file.
+    fn download_input(&self, file: &CloudFile) -> String;
 
     async fn login(&self, account: &Account, open_url: OpenUrl) -> Result<String>;
 

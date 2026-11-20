@@ -1,9 +1,14 @@
-use dm_providers::cloud::{Account, CloudFile, CloudProvider, cloud_providers};
+use dm_providers::cloud::{Account, AccountField, CloudFile, CloudProvider, cloud_providers};
+use dm_providers::{CollectionItem, DownloadProvider};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 enum CloudEvent {
+    Collection {
+        generation: u64,
+        result: Result<Vec<CollectionItem>, String>,
+    },
     Status(String),
     LoggedIn {
         index: usize,
@@ -30,7 +35,20 @@ pub struct ProviderState {
 
 const STATUS_TTL: Duration = Duration::from_secs(5);
 
+pub struct Picker {
+    pub provider_id: &'static str,
+    pub title: String,
+    pub items: Vec<CollectionItem>,
+    pub checked: Vec<bool>,
+    pub selected: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+    generation: u64,
+}
+
 pub struct CloudManager {
+    pub picker: Option<Picker>,
+    picker_generation: u64,
     states: Vec<ProviderState>,
     status: String,
     status_set_at: Instant,
@@ -56,6 +74,8 @@ impl CloudManager {
             })
             .collect();
         Self {
+            picker: None,
+            picker_generation: 0,
             states,
             status,
             status_set_at: Instant::now(),
@@ -91,6 +111,20 @@ impl CloudManager {
 
     fn handle_event(&mut self, event: CloudEvent) {
         match event {
+            CloudEvent::Collection { generation, result } => {
+                let Some(picker) = self.picker.as_mut().filter(|p| p.generation == generation)
+                else {
+                    return;
+                };
+                picker.loading = false;
+                match result {
+                    Ok(items) => {
+                        picker.checked = vec![false; items.len()];
+                        picker.items = items;
+                    }
+                    Err(error) => picker.error = Some(error),
+                }
+            }
             CloudEvent::Status(message) => self.set_status(message),
             CloudEvent::LoggedIn { index, result } => {
                 let Some(state) = self.states.get_mut(index) else {
@@ -152,14 +186,47 @@ impl CloudManager {
         }
     }
 
-    pub fn set_client_id(&mut self, index: usize, value: String) {
-        self.update_account(index, |account| account.client_id = value.trim().to_owned());
+    pub fn open_picker(&mut self, provider: &'static dyn DownloadProvider, input: String) {
+        self.picker_generation += 1;
+        let generation = self.picker_generation;
+        self.picker = Some(Picker {
+            provider_id: provider.id(),
+            title: provider.name().to_owned(),
+            items: Vec::new(),
+            checked: Vec::new(),
+            selected: 0,
+            loading: true,
+            error: None,
+            generation,
+        });
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = provider
+                .list_collection(&input)
+                .await
+                .map_err(|error| format!("{error:#}"));
+            let _ = tx.send(CloudEvent::Collection { generation, result });
+        });
     }
 
-    pub fn set_client_secret(&mut self, index: usize, value: String) {
-        self.update_account(index, |account| {
-            account.client_secret = value.trim().to_owned()
-        });
+    pub fn close_picker(&mut self, confirm: bool) -> Vec<(&'static str, String)> {
+        let Some(picker) = self.picker.take() else {
+            return Vec::new();
+        };
+        if !confirm {
+            return Vec::new();
+        }
+        picker
+            .items
+            .into_iter()
+            .zip(picker.checked)
+            .filter(|(_, checked)| *checked)
+            .map(|(item, _)| (picker.provider_id, item.input))
+            .collect()
+    }
+
+    pub fn set_field(&mut self, index: usize, field: AccountField, value: String) {
+        self.update_account(index, |account| field.set(account, value));
     }
 
     pub fn logout(&mut self, index: usize) {
@@ -181,8 +248,8 @@ impl CloudManager {
         if state.logging_in {
             return;
         }
-        if !state.account.has_client() {
-            self.set_status("Set the client ID and client secret first".to_owned());
+        if !provider.is_configured(&state.account) {
+            self.set_status("Fill in the required settings first".to_owned());
             return;
         }
         state.logging_in = true;

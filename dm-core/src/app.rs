@@ -15,6 +15,7 @@ use dm_ui::screens::{
 use dm_ui::widgets::{
     command_palette::CommandPalette,
     confirm_popup::ConfirmPopup,
+    file_picker::{FilePicker, PickerRow},
     footer::Footer,
     input_popup::InputPopup,
     sidebar::{Sidebar, SidebarItem},
@@ -57,8 +58,7 @@ pub struct App {
 
 enum InputTarget {
     Download(&'static str),
-    ClientId(usize),
-    ClientSecret(usize),
+    Field(usize, dm_providers::cloud::AccountField),
 }
 
 struct ProviderInput {
@@ -214,12 +214,34 @@ impl App {
                 frame.area(),
             );
         }
+        if let Some(picker) = &self.cloud.picker {
+            let rows: Vec<PickerRow> = picker
+                .items
+                .iter()
+                .zip(&picker.checked)
+                .map(|(item, checked)| PickerRow {
+                    name: item.name.clone(),
+                    size: item.size.map(dm_ui::screens::downloads::format_bytes),
+                    checked: *checked,
+                })
+                .collect();
+            frame.render_widget(
+                FilePicker {
+                    title: &picker.title,
+                    rows: &rows,
+                    selected: picker.selected,
+                    loading: picker.loading,
+                    error: picker.error.as_deref(),
+                },
+                frame.area(),
+            );
+        }
         if let Some(input) = &self.input_popup {
             frame.render_widget(
                 InputPopup {
                     title: &input.title,
                     value: &input.value,
-                    masked: matches!(input.target, InputTarget::ClientSecret(_)),
+                    masked: matches!(input.target, InputTarget::Field(_, field) if field.is_secret()),
                 },
                 frame.area(),
             );
@@ -237,24 +259,18 @@ impl App {
             return;
         };
         let account = &state.account;
-        let masked = |text: &str| {
-            if text.is_empty() {
-                "not set".to_owned()
-            } else {
-                "•".repeat(8)
-            }
-        };
+        let masked = |_: &str| "•".repeat(8);
         let rows: Vec<FileRow> = state
             .files
             .iter()
             .map(|file| FileRow {
                 name: file.name.clone(),
                 is_folder: file.is_folder,
-                size: file.size.map(|size| format!("{size} B")),
+                size: file.size.map(dm_ui::screens::downloads::format_bytes),
                 checked: state.selected.contains(&file.id),
             })
             .collect();
-        let items = [
+        let mut items = vec![
             MenuItem {
                 label: "Browse files".to_owned(),
                 value: if account.is_logged_in() {
@@ -278,19 +294,20 @@ impl App {
                     "not logged in".to_owned()
                 },
             },
-            MenuItem {
-                label: "Client ID".to_owned(),
-                value: if account.client_id.is_empty() {
-                    "not set".to_owned()
-                } else {
-                    account.client_id.clone()
-                },
-            },
-            MenuItem {
-                label: "Client secret".to_owned(),
-                value: masked(&account.client_secret),
-            },
         ];
+        items.extend(provider.fields().iter().map(|spec| {
+            let value = spec.field.get(account);
+            MenuItem {
+                label: spec.label.to_owned(),
+                value: if value.is_empty() {
+                    "not set".to_owned()
+                } else if spec.field.is_secret() {
+                    masked(value)
+                } else {
+                    value.to_owned()
+                },
+            }
+        }));
         let view = if self.browsing {
             let mut path = String::from("/");
             for (_, name) in &state.path {
