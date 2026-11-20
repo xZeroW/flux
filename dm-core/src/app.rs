@@ -112,8 +112,16 @@ impl App {
             .constraints([Constraint::Percentage(26), Constraint::Min(0)])
             .areas(content_area);
 
+        let provider_names: Vec<&str> = dm_providers::providers()
+            .iter()
+            .map(|provider| provider.name())
+            .collect();
         frame.render_widget(
-            Sidebar::new(self.sidebar_selection, self.focus == Focus::Sidebar),
+            Sidebar::new(
+                self.sidebar_selection,
+                self.focus == Focus::Sidebar,
+                &provider_names,
+            ),
             sidebar_area,
         );
         match &self.current_screen {
@@ -339,26 +347,25 @@ impl App {
     }
 
     fn move_sidebar_selection(&mut self, forward: bool) {
-        const ITEMS: [SidebarItem; 8] = [
+        let items: Vec<SidebarItem> = [
             SidebarItem::Downloads,
             SidebarItem::History,
             SidebarItem::Queue,
             SidebarItem::Settings,
-            SidebarItem::MediaFire,
-            SidebarItem::Mega,
-            SidebarItem::GoogleDrive,
-            SidebarItem::Torrents,
-        ];
-        let index = ITEMS
+        ]
+        .into_iter()
+        .chain((0..dm_providers::providers().len()).map(SidebarItem::Provider))
+        .collect();
+        let index = items
             .iter()
             .position(|item| *item == self.sidebar_selection)
             .unwrap_or(0);
         let next_index = if forward {
-            (index + 1) % ITEMS.len()
+            (index + 1) % items.len()
         } else {
-            (index + ITEMS.len() - 1) % ITEMS.len()
+            (index + items.len() - 1) % items.len()
         };
-        self.sidebar_selection = ITEMS[next_index];
+        self.sidebar_selection = items[next_index];
     }
 
     fn activate_sidebar_selection(&mut self) {

@@ -36,6 +36,13 @@ pub trait DownloadProvider: Send + Sync {
     ) -> anyhow::Result<()>;
 }
 
-pub fn commands() -> &'static [ProviderCommand] {
-    direct_download::commands()
+pub fn providers() -> &'static [&'static dyn DownloadProvider] {
+    &[&direct_download::DirectDownloadProvider]
+}
+
+pub fn commands() -> Vec<ProviderCommand> {
+    providers()
+        .iter()
+        .flat_map(|provider| provider.commands().iter().copied())
+        .collect()
 }

@@ -12,24 +12,26 @@ pub enum SidebarItem {
     History,
     Queue,
     Settings,
-    MediaFire,
-    Mega,
-    GoogleDrive,
-    Torrents,
+    Provider(usize),
 }
 
-pub struct Sidebar {
+pub struct Sidebar<'a> {
     selected: SidebarItem,
     focused: bool,
+    providers: &'a [&'a str],
 }
 
-impl Sidebar {
-    pub fn new(selected: SidebarItem, focused: bool) -> Self {
-        Self { selected, focused }
+impl<'a> Sidebar<'a> {
+    pub fn new(selected: SidebarItem, focused: bool, providers: &'a [&'a str]) -> Self {
+        Self {
+            selected,
+            focused,
+            providers,
+        }
     }
 }
 
-impl Widget for Sidebar {
+impl Widget for Sidebar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let border_style = if self.focused {
             Style::default().fg(Color::Cyan)
@@ -40,7 +42,7 @@ impl Widget for Sidebar {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let lines = vec![
+        let mut lines = vec![
             Line::from(""),
             Line::from(Span::styled(
                 "  GENERAL",
@@ -55,11 +57,10 @@ impl Widget for Sidebar {
                 "  PROVIDERS",
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            item_line("MediaFire", SidebarItem::MediaFire, self.selected),
-            item_line("MEGA", SidebarItem::Mega, self.selected),
-            item_line("Google Drive", SidebarItem::GoogleDrive, self.selected),
-            item_line("Torrents", SidebarItem::Torrents, self.selected),
         ];
+        for (index, name) in self.providers.iter().enumerate() {
+            lines.push(item_line(name, SidebarItem::Provider(index), self.selected));
+        }
 
         Paragraph::new(lines).render(inner, buf);
     }
