@@ -1,5 +1,5 @@
 [workspace]
-members = ["dm-ui", "dm-core", "dm-net", "dm-providers"]
+members = ["dm-ui", "dm-core", "dm-providers"]
 resolver = "3"
 
 [workspace.dependencies]

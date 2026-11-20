@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::watch};
 
 use crate::{
@@ -16,6 +19,8 @@ pub fn commands() -> &'static [ProviderCommand] {
         input_prompt: "Direct download URL",
     }]
 }
+
+const REPORT_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DirectDownloadProvider;
@@ -66,11 +71,6 @@ impl DownloadProvider for DirectDownloadProvider {
     }
 }
 
-pub async fn download(url: &str, destination: impl AsRef<Path>) -> Result<()> {
-    let (_pause_tx, pause_rx) = watch::channel(false);
-    download_with_progress(url, destination, pause_rx, |_, _| {}).await
-}
-
 pub async fn download_with_progress(
     url: &str,
     destination: impl AsRef<Path>,
@@ -119,6 +119,7 @@ pub async fn download_with_progress(
     let total = response.content_length().map(|length| length + offset);
     let mut received = offset;
     let mut stream = response.bytes_stream();
+    let mut last_report = Instant::now();
 
     loop {
         while *paused.borrow() {
@@ -143,8 +144,12 @@ pub async fn download_with_progress(
             .await
             .with_context(|| format!("writing {}", temporary_path.display()))?;
         received += chunk.len() as u64;
-        progress(received, total);
+        if last_report.elapsed() >= REPORT_INTERVAL {
+            progress(received, total);
+            last_report = Instant::now();
+        }
     }
+    progress(received, total);
     file.flush()
         .await
         .with_context(|| format!("flushing {}", temporary_path.display()))?;

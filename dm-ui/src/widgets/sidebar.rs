@@ -103,3 +103,17 @@ fn item_line(label: &str, item: SidebarItem, selected: SidebarItem) -> Line<'sta
 
     Line::from(Span::styled(format!("{prefix}{label}"), style))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_wraps_in_both_directions() {
+        let last = SidebarItem::Provider(1);
+        assert!(last.step(true, 2) == SidebarItem::Downloads);
+        assert!(SidebarItem::Downloads.step(false, 2) == last);
+        assert!(SidebarItem::Settings.step(true, 2) == SidebarItem::Provider(0));
+        assert!(SidebarItem::Settings.step(true, 0) == SidebarItem::Downloads);
+    }
+}

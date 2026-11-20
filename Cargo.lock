@@ -799,10 +799,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dm-net"
-version = "0.1.0"
-
-[[package]]
 name = "dm-providers"
 version = "0.1.0"
 dependencies = [

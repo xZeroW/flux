@@ -27,7 +27,7 @@ impl Widget for Footer<'_> {
                     Span::raw(" Quit"),
                 ])
             },
-            |message| Line::from(message),
+            Line::from,
         );
         let footer = Paragraph::new(content).centered().block(Block::bordered());
         footer.render(area, buf);

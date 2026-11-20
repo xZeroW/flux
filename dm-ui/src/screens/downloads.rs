@@ -7,11 +7,52 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 
-pub struct DownloadsScreen {
+pub struct DownloadsScreen<'a> {
     pub focused: bool,
     pub selected_row: usize,
-    pub downloads: Vec<DownloadEntry>,
+    pub downloads: &'a [DownloadEntry],
     pub progress_bar: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(from = "String", into = "String")]
+pub enum DownloadStatus {
+    #[default]
+    Downloading,
+    Paused,
+    Complete,
+    Failed(String),
+}
+
+impl std::fmt::Display for DownloadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Downloading => f.write_str("Downloading"),
+            Self::Paused => f.write_str("Paused"),
+            Self::Complete => f.write_str("Complete"),
+            Self::Failed(reason) => write!(f, "Failed: {reason}"),
+        }
+    }
+}
+
+impl From<String> for DownloadStatus {
+    fn from(text: String) -> Self {
+        match text.as_str() {
+            "Downloading" => Self::Downloading,
+            "Paused" => Self::Paused,
+            "Complete" => Self::Complete,
+            _ => Self::Failed(
+                text.strip_prefix("Failed: ")
+                    .map_or(text.clone(), str::to_owned),
+            ),
+        }
+    }
+}
+
+impl From<DownloadStatus> for String {
+    fn from(status: DownloadStatus) -> Self {
+        status.to_string()
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -21,7 +62,7 @@ pub struct DownloadEntry {
     pub received: u64,
     pub total: Option<u64>,
     pub speed: String,
-    pub status: String,
+    pub status: DownloadStatus,
     pub url: String,
     pub destination: String,
 }
@@ -55,14 +96,17 @@ impl DownloadEntry {
 
 fn format_bytes(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
-    if bytes >= MB {
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
         format!("{:.1} MB", bytes as f64 / MB as f64)
     } else {
         format!("{bytes} B")
     }
 }
 
-impl Widget for DownloadsScreen {
+impl Widget for DownloadsScreen<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let border_style = if self.focused {
             Style::default().fg(Color::Cyan)
@@ -94,7 +138,7 @@ impl Widget for DownloadsScreen {
                 download.provider.clone(),
                 download.progress(self.progress_bar),
                 download.speed.clone(),
-                download.status.clone(),
+                download.status.to_string(),
             ])
         });
         let table = Table::new(
@@ -142,5 +186,29 @@ impl Widget for DownloadsScreen {
             },
         );
         details.render(details_area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_round_trips_through_its_text_form() {
+        for status in [
+            DownloadStatus::Downloading,
+            DownloadStatus::Paused,
+            DownloadStatus::Complete,
+            DownloadStatus::Failed("connection reset".to_owned()),
+        ] {
+            assert_eq!(DownloadStatus::from(String::from(status.clone())), status);
+        }
+    }
+
+    #[test]
+    fn formats_sizes() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(3 * 1024 * 1024), "3.0 MB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.00 GB");
     }
 }
