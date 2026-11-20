@@ -8,11 +8,17 @@ use ratatui::{
 
 pub struct SettingsScreen {
     pub skip_splash: bool,
+    pub focused: bool,
 }
 
 impl Widget for SettingsScreen {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let checkbox = if self.skip_splash { "[x]" } else { "[ ]" };
+        let border_style = if self.focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
         let settings = Paragraph::new(vec![
             Line::from(Span::styled(
                 "GENERAL",
@@ -33,7 +39,8 @@ impl Widget for SettingsScreen {
         .block(
             Block::bordered()
                 .title(" Settings ")
-                .padding(Padding::horizontal(1)),
+                .padding(Padding::horizontal(1))
+                .border_style(border_style),
         );
         settings.render(area, buf);
     }

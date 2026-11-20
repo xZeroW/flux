@@ -11,19 +11,16 @@ pub struct Footer;
 impl Widget for Footer {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let footer = Paragraph::new(Line::from(vec![
-            Span::styled("[a]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Add download   "),
-            Span::styled("[Space]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Pause/Resume   "),
-            Span::styled("[d]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Details   "),
             Span::styled("[?]", Style::default().fg(Color::Cyan)),
             Span::raw(" Help   "),
-            Span::styled("[s]", Style::default().fg(Color::Cyan)),
-            Span::raw(" Settings   "),
+            Span::styled("[Tab]", Style::default().fg(Color::Cyan)),
+            Span::raw(" Focus   "),
+            Span::styled("[h/j/k/l]", Style::default().fg(Color::Cyan)),
+            Span::raw(" Navigate   "),
             Span::styled("[q]", Style::default().fg(Color::Cyan)),
             Span::raw(" Quit"),
         ]))
+        .centered()
         .block(Block::bordered());
         footer.render(area, buf);
     }

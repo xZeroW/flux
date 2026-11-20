@@ -20,17 +20,23 @@ pub enum SidebarItem {
 
 pub struct Sidebar {
     selected: SidebarItem,
+    focused: bool,
 }
 
 impl Sidebar {
-    pub fn new(selected: SidebarItem) -> Self {
-        Self { selected }
+    pub fn new(selected: SidebarItem, focused: bool) -> Self {
+        Self { selected, focused }
     }
 }
 
 impl Widget for Sidebar {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title(" FLUX ");
+        let border_style = if self.focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let block = Block::bordered().title(" FLUX ").border_style(border_style);
         let inner = block.inner(area);
         block.render(area, buf);
 

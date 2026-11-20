@@ -3,16 +3,25 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Padding, Paragraph, Row, Table, Widget},
+    widgets::{Block, Padding, Paragraph, Row, StatefulWidget, Table, TableState, Widget},
 };
 
-pub struct DownloadsScreen;
+pub struct DownloadsScreen {
+    pub focused: bool,
+    pub selected_row: usize,
+}
 
 impl Widget for DownloadsScreen {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let border_style = if self.focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
         let block = Block::bordered()
             .title(" Downloads ")
-            .padding(Padding::horizontal(1));
+            .padding(Padding::horizontal(1))
+            .border_style(border_style);
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -48,7 +57,8 @@ impl Widget for DownloadsScreen {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         );
-        table.render(downloads_area, buf);
+        let mut table_state = TableState::default().with_selected(Some(self.selected_row));
+        StatefulWidget::render(table, downloads_area, buf, &mut table_state);
 
         Paragraph::new(Line::from("─".repeat(divider_area.width as usize)))
             .style(Style::default().fg(Color::DarkGray))

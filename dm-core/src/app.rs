@@ -15,8 +15,17 @@ use ratatui::{
 };
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Sidebar,
+    Content,
+}
+
 pub struct App {
     current_screen: Screen,
+    sidebar_selection: SidebarItem,
+    focus: Focus,
+    selected_download: usize,
     exit: bool,
     splash_started: Instant,
     settings: Settings,
@@ -32,6 +41,9 @@ impl App {
         };
         Ok(Self {
             current_screen,
+            sidebar_selection: SidebarItem::Downloads,
+            focus: Focus::Content,
+            selected_download: 0,
             exit: false,
             splash_started: Instant::now(),
             settings,
@@ -77,17 +89,22 @@ impl App {
             .constraints([Constraint::Percentage(26), Constraint::Min(0)])
             .areas(content_area);
 
-        let selected = match &self.current_screen {
-            Screen::Downloads => SidebarItem::Downloads,
-            Screen::Settings => SidebarItem::Settings,
-            Screen::Splash => unreachable!("splash is drawn without the main layout"),
-        };
-        frame.render_widget(Sidebar::new(selected), sidebar_area);
+        frame.render_widget(
+            Sidebar::new(self.sidebar_selection, self.focus == Focus::Sidebar),
+            sidebar_area,
+        );
         match &self.current_screen {
-            Screen::Downloads => frame.render_widget(DownloadsScreen, main_area),
+            Screen::Downloads => frame.render_widget(
+                DownloadsScreen {
+                    focused: self.focus == Focus::Content,
+                    selected_row: self.selected_download,
+                },
+                main_area,
+            ),
             Screen::Settings => frame.render_widget(
                 SettingsScreen {
                     skip_splash: self.settings.skip_splash,
+                    focused: self.focus == Focus::Content,
                 },
                 main_area,
             ),
@@ -112,18 +129,93 @@ impl App {
     }
 
     fn handle_key_pressed(&mut self, key_event: KeyEvent) -> Result<()> {
-        match (&self.current_screen, key_event.code) {
-            (_, KeyCode::Char('q' | 'Q')) => self.exit(),
-            (Screen::Splash, KeyCode::Enter) => self.current_screen = Screen::Downloads,
-            (Screen::Downloads, KeyCode::Char('s' | 'S')) => self.current_screen = Screen::Settings,
-            (Screen::Settings, KeyCode::Esc) => self.current_screen = Screen::Downloads,
-            (Screen::Settings, KeyCode::Enter | KeyCode::Char(' ')) => {
-                self.settings.skip_splash = !self.settings.skip_splash;
-                self.settings.save()?;
+        match key_event.code {
+            KeyCode::Char('q' | 'Q') => self.exit(),
+            KeyCode::Tab => {
+                self.focus = match self.focus {
+                    Focus::Sidebar => Focus::Content,
+                    Focus::Content => Focus::Sidebar,
+                };
+            }
+            KeyCode::Char('h') | KeyCode::Left => self.focus = Focus::Sidebar,
+            KeyCode::Char('l') | KeyCode::Right => self.focus = Focus::Content,
+            KeyCode::Char('j') | KeyCode::Down if self.focus == Focus::Sidebar => {
+                self.move_sidebar_selection(true);
+            }
+            KeyCode::Char('k') | KeyCode::Up if self.focus == Focus::Sidebar => {
+                self.move_sidebar_selection(false);
+            }
+            KeyCode::Char('j') | KeyCode::Down
+                if self.focus == Focus::Content
+                    && matches!(self.current_screen, Screen::Downloads) =>
+            {
+                self.selected_download = (self.selected_download + 1).min(2);
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self.focus == Focus::Content
+                    && matches!(self.current_screen, Screen::Downloads) =>
+            {
+                self.selected_download = self.selected_download.saturating_sub(1);
+            }
+            KeyCode::Enter if self.focus == Focus::Sidebar => self.activate_sidebar_selection(),
+            KeyCode::Enter | KeyCode::Char(' ')
+                if self.focus == Focus::Content
+                    && matches!(self.current_screen, Screen::Settings) =>
+            {
+                self.toggle_skip_splash()?;
+            }
+            KeyCode::Char('s' | 'S') => {
+                self.current_screen = Screen::Settings;
+                self.sidebar_selection = SidebarItem::Settings;
+                self.focus = Focus::Content;
+            }
+            KeyCode::Esc if matches!(self.current_screen, Screen::Settings) => {
+                self.current_screen = Screen::Downloads;
+                self.sidebar_selection = SidebarItem::Downloads;
+            }
+            KeyCode::Enter if matches!(self.current_screen, Screen::Splash) => {
+                self.current_screen = Screen::Downloads;
+                self.sidebar_selection = SidebarItem::Downloads;
             }
             _ => {}
         }
         Ok(())
+    }
+
+    fn move_sidebar_selection(&mut self, forward: bool) {
+        const ITEMS: [SidebarItem; 8] = [
+            SidebarItem::Downloads,
+            SidebarItem::History,
+            SidebarItem::Queue,
+            SidebarItem::Settings,
+            SidebarItem::MediaFire,
+            SidebarItem::Mega,
+            SidebarItem::GoogleDrive,
+            SidebarItem::Torrents,
+        ];
+        let index = ITEMS
+            .iter()
+            .position(|item| *item == self.sidebar_selection)
+            .unwrap_or(0);
+        let next_index = if forward {
+            (index + 1) % ITEMS.len()
+        } else {
+            (index + ITEMS.len() - 1) % ITEMS.len()
+        };
+        self.sidebar_selection = ITEMS[next_index];
+    }
+
+    fn activate_sidebar_selection(&mut self) {
+        match self.sidebar_selection {
+            SidebarItem::Downloads => self.current_screen = Screen::Downloads,
+            SidebarItem::Settings => self.current_screen = Screen::Settings,
+            _ => {}
+        }
+    }
+
+    fn toggle_skip_splash(&mut self) -> Result<()> {
+        self.settings.skip_splash = !self.settings.skip_splash;
+        self.settings.save()
     }
 
     fn exit(&mut self) {
