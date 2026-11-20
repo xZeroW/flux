@@ -1,4 +1,4 @@
-use super::{App, Focus, ProviderInput};
+use super::{App, Focus, InputTarget, ProviderInput};
 use crate::settings::Settings;
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
@@ -32,6 +32,13 @@ impl App {
         }
         if self.command_palette_open {
             self.handle_command_palette_key(key_event.code);
+            return Ok(());
+        }
+
+        if self.focus == Focus::Content
+            && matches!(self.current_screen, Screen::Provider)
+            && self.handle_provider_key(key_event.code)
+        {
             return Ok(());
         }
 
@@ -72,12 +79,14 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down if self.focus == Focus::Sidebar => {
                 self.sidebar_selection = self
                     .sidebar_selection
-                    .step(true, dm_providers::providers().len());
+                    .step(true, dm_providers::cloud::cloud_providers().len());
+                self.show_sidebar_selection();
             }
             KeyCode::Char('k') | KeyCode::Up if self.focus == Focus::Sidebar => {
                 self.sidebar_selection = self
                     .sidebar_selection
-                    .step(false, dm_providers::providers().len());
+                    .step(false, dm_providers::cloud::cloud_providers().len());
+                self.show_sidebar_selection();
             }
             KeyCode::Char('j') | KeyCode::Down
                 if self.focus == Focus::Content
@@ -157,7 +166,7 @@ impl App {
                 self.command_palette_open = false;
                 if let Some(command) = commands.get(self.selected_command) {
                     self.input_popup = Some(ProviderInput {
-                        provider_id: command.provider_id,
+                        target: InputTarget::Download(command.provider_id),
                         title: command.input_prompt.to_owned(),
                         value: String::new(),
                     });
@@ -192,9 +201,19 @@ impl App {
             KeyCode::Esc => self.input_popup = None,
             KeyCode::Enter => {
                 if let Some(input) = self.input_popup.take() {
-                    self.downloads
-                        .start_download(input.provider_id, input.value);
-                    self.selected_download = self.downloads.entries().len().saturating_sub(1);
+                    match input.target {
+                        InputTarget::Download(provider_id) => {
+                            self.downloads.start_download(provider_id, input.value);
+                            self.selected_download =
+                                self.downloads.entries().len().saturating_sub(1);
+                        }
+                        InputTarget::ClientId(index) => {
+                            self.cloud.set_client_id(index, input.value)
+                        }
+                        InputTarget::ClientSecret(index) => {
+                            self.cloud.set_client_secret(index, input.value)
+                        }
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -211,10 +230,125 @@ impl App {
         dm_providers::commands_matching(&self.command_query)
     }
 
-    fn activate_sidebar_selection(&mut self) {
+    fn show_sidebar_selection(&mut self) {
         match self.sidebar_selection {
             SidebarItem::Downloads => self.current_screen = Screen::Downloads,
             SidebarItem::Settings => self.current_screen = Screen::Settings,
+            SidebarItem::Provider(_) => {
+                self.current_screen = Screen::Provider;
+                self.browsing = false;
+                self.selected_menu = 0;
+            }
+        }
+    }
+
+    fn activate_sidebar_selection(&mut self) {
+        self.show_sidebar_selection();
+        if matches!(self.sidebar_selection, SidebarItem::Provider(_)) {
+            self.focus = Focus::Content;
+        }
+    }
+
+    fn selected_provider(&self) -> Option<usize> {
+        match self.sidebar_selection {
+            SidebarItem::Provider(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    fn handle_provider_key(&mut self, code: KeyCode) -> bool {
+        let Some(index) = self.selected_provider() else {
+            return false;
+        };
+        if self.browsing {
+            let count = self.cloud.state(index).map_or(0, |state| state.files.len());
+            match code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.selected_file = (self.selected_file + 1).min(count.saturating_sub(1));
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.selected_file = self.selected_file.saturating_sub(1);
+                }
+                KeyCode::Enter => {
+                    self.cloud.open_folder(index, self.selected_file);
+                    self.selected_file = 0;
+                }
+                KeyCode::Char(' ') => self.cloud.toggle_selected(index, self.selected_file),
+                KeyCode::Char('g') => self.download_selected_cloud_files(index),
+                KeyCode::Backspace => {
+                    if self.cloud.go_up(index) {
+                        self.selected_file = 0;
+                    }
+                }
+                KeyCode::Esc => {
+                    if self.cloud.go_up(index) {
+                        self.selected_file = 0;
+                    } else {
+                        self.browsing = false;
+                    }
+                }
+                _ => return false,
+            }
+            return true;
+        }
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.selected_menu = (self.selected_menu + 1).min(3)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.selected_menu = self.selected_menu.saturating_sub(1)
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => self.activate_provider_menu(index),
+            KeyCode::Esc => {
+                self.current_screen = Screen::Downloads;
+                self.sidebar_selection = SidebarItem::Downloads;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn download_selected_cloud_files(&mut self, index: usize) {
+        let Some(provider) = dm_providers::cloud::cloud_providers().get(index) else {
+            return;
+        };
+        let files = self.cloud.take_selected(index);
+        for file in &files {
+            let input = dm_providers::cloud::gdrive::download_input(file);
+            self.downloads.start_download(provider.id(), input);
+        }
+        if !files.is_empty() {
+            self.selected_download = self.downloads.entries().len().saturating_sub(1);
+        }
+    }
+
+    fn activate_provider_menu(&mut self, index: usize) {
+        let Some(state) = self.cloud.state(index) else {
+            return;
+        };
+        let logged_in = state.account.is_logged_in();
+        match self.selected_menu {
+            0 if logged_in => self.cloud.logout(index),
+            0 => self.cloud.login(index),
+            1 => {
+                self.input_popup = Some(ProviderInput {
+                    target: InputTarget::ClientId(index),
+                    title: "OAuth client ID".to_owned(),
+                    value: String::new(),
+                });
+            }
+            2 => {
+                self.input_popup = Some(ProviderInput {
+                    target: InputTarget::ClientSecret(index),
+                    title: "OAuth client secret".to_owned(),
+                    value: String::new(),
+                });
+            }
+            3 if logged_in => {
+                self.browsing = true;
+                self.selected_file = 0;
+                self.cloud.refresh(index);
+            }
             _ => {}
         }
     }

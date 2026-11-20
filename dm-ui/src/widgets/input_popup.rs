@@ -9,6 +9,7 @@ use ratatui::{
 pub struct InputPopup<'a> {
     pub title: &'a str,
     pub value: &'a str,
+    pub masked: bool,
 }
 
 impl Widget for InputPopup<'_> {
@@ -35,7 +36,11 @@ impl Widget for InputPopup<'_> {
             Line::from("Enter a value, then press Enter"),
             Line::from(vec![
                 Span::styled("> ", Style::default().fg(Color::Cyan)),
-                Span::raw(self.value),
+                Span::raw(if self.masked {
+                    "•".repeat(self.value.chars().count())
+                } else {
+                    self.value.to_owned()
+                }),
                 Span::styled("▏", Style::default().fg(Color::DarkGray)),
             ]),
         ])

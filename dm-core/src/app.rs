@@ -1,11 +1,16 @@
 use crate::{
+    cloud::CloudManager,
     downloads::DownloadManager,
     settings::{ProgressDisplay, Settings},
 };
 use anyhow::Result;
 use crossterm::event::EventStream;
 use dm_ui::screens::{
-    Screen, downloads::DownloadsScreen, settings::SettingsScreen, splash::SplashScreen,
+    Screen,
+    downloads::DownloadsScreen,
+    provider::{FileRow, MenuItem, ProviderScreen, ProviderView},
+    settings::SettingsScreen,
+    splash::SplashScreen,
 };
 use dm_ui::widgets::{
     command_palette::CommandPalette,
@@ -44,10 +49,20 @@ pub struct App {
     input_popup: Option<ProviderInput>,
     confirm_delete: Option<usize>,
     downloads: DownloadManager,
+    cloud: CloudManager,
+    browsing: bool,
+    selected_menu: usize,
+    selected_file: usize,
+}
+
+enum InputTarget {
+    Download(&'static str),
+    ClientId(usize),
+    ClientSecret(usize),
 }
 
 struct ProviderInput {
-    provider_id: &'static str,
+    target: InputTarget,
     title: String,
     value: String,
 }
@@ -75,11 +90,16 @@ impl App {
             input_popup: None,
             confirm_delete: None,
             downloads: DownloadManager::new()?,
+            cloud: CloudManager::new(),
+            browsing: false,
+            selected_menu: 0,
+            selected_file: 0,
         })
     }
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut events = EventStream::new();
+        let mut status_tick = tokio::time::interval(Duration::from_millis(500));
         let mut animation_tick = tokio::time::interval(Duration::from_millis(50));
 
         while !self.exit {
@@ -88,6 +108,12 @@ impl App {
             tokio::select! {
                 event = events.next() => self.handle_event(event.transpose()?)?,
                 Some(()) = self.downloads.recv_event() => {},
+                Some(()) = self.cloud.recv_event() => {
+                    let count = self.cloud_file_count();
+                    self.selected_file = self.selected_file.min(count.saturating_sub(1));
+                },
+                // Redraw periodically so expired status messages disappear.
+                _ = status_tick.tick() => {}
                 _ = animation_tick.tick(), if matches!(&self.current_screen, Screen::Splash) => {
                     if self.splash_started.elapsed() >= Duration::from_secs(2) {
                         self.current_screen = Screen::Downloads;
@@ -104,7 +130,7 @@ impl App {
                 SplashScreen::new(self.splash_started.elapsed().as_secs_f32()),
                 frame.area(),
             ),
-            Screen::Downloads | Screen::Settings => self.draw_main_layout(frame),
+            Screen::Downloads | Screen::Settings | Screen::Provider => self.draw_main_layout(frame),
         }
     }
 
@@ -118,7 +144,7 @@ impl App {
             .constraints([Constraint::Percentage(14), Constraint::Min(10)])
             .areas(content_area);
 
-        let provider_names: Vec<&str> = dm_providers::providers()
+        let provider_names: Vec<&str> = dm_providers::cloud::cloud_providers()
             .iter()
             .map(|provider| provider.name())
             .collect();
@@ -149,11 +175,12 @@ impl App {
                 },
                 main_area,
             ),
+            Screen::Provider => self.draw_provider(frame, main_area),
             Screen::Splash => unreachable!("splash is drawn without the main layout"),
         }
         frame.render_widget(
             Footer {
-                message: self.downloads.status(),
+                message: self.cloud.status().or(self.downloads.status()),
             },
             footer_area,
         );
@@ -192,9 +219,111 @@ impl App {
                 InputPopup {
                     title: &input.title,
                     value: &input.value,
+                    masked: matches!(input.target, InputTarget::ClientSecret(_)),
                 },
                 frame.area(),
             );
+        }
+    }
+
+    fn draw_provider(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        let SidebarItem::Provider(index) = self.sidebar_selection else {
+            return;
+        };
+        let (Some(provider), Some(state)) = (
+            dm_providers::cloud::cloud_providers().get(index),
+            self.cloud.state(index),
+        ) else {
+            return;
+        };
+        let account = &state.account;
+        let masked = |text: &str| {
+            if text.is_empty() {
+                "not set".to_owned()
+            } else {
+                "•".repeat(8)
+            }
+        };
+        let rows: Vec<FileRow> = state
+            .files
+            .iter()
+            .map(|file| FileRow {
+                name: file.name.clone(),
+                is_folder: file.is_folder,
+                size: file.size.map(|size| format!("{size} B")),
+                checked: state.selected.contains(&file.id),
+            })
+            .collect();
+        let items = [
+            MenuItem {
+                label: if account.is_logged_in() {
+                    "Logout"
+                } else {
+                    "Login"
+                }
+                .to_owned(),
+                value: if state.logging_in {
+                    "waiting for browser…".to_owned()
+                } else if account.is_logged_in() {
+                    "logged in".to_owned()
+                } else {
+                    "not logged in".to_owned()
+                },
+            },
+            MenuItem {
+                label: "Client ID".to_owned(),
+                value: if account.client_id.is_empty() {
+                    "not set".to_owned()
+                } else {
+                    account.client_id.clone()
+                },
+            },
+            MenuItem {
+                label: "Client secret".to_owned(),
+                value: masked(&account.client_secret),
+            },
+            MenuItem {
+                label: "Browse files".to_owned(),
+                value: if account.is_logged_in() {
+                    String::new()
+                } else {
+                    "login required".to_owned()
+                },
+            },
+        ];
+        let view = if self.browsing {
+            let mut path = String::from("/");
+            for (_, name) in &state.path {
+                path.push_str(name);
+                path.push('/');
+            }
+            ProviderView::Browse {
+                path,
+                rows: &rows,
+                selected: self.selected_file,
+                loading: state.loading,
+                error: state.error.as_deref(),
+            }
+        } else {
+            ProviderView::Menu {
+                items: &items,
+                selected: self.selected_menu,
+            }
+        };
+        frame.render_widget(
+            ProviderScreen {
+                name: provider.name(),
+                focused: self.focus == Focus::Content,
+                view,
+            },
+            area,
+        );
+    }
+
+    fn cloud_file_count(&self) -> usize {
+        match self.sidebar_selection {
+            SidebarItem::Provider(index) => self.cloud.state(index).map_or(0, |s| s.files.len()),
+            _ => 0,
         }
     }
 

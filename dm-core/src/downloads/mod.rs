@@ -14,6 +14,7 @@ use tokio::sync::{
 
 const PERSIST_INTERVAL: Duration = Duration::from_secs(2);
 const SPEED_INTERVAL: Duration = Duration::from_secs(1);
+const STATUS_TTL: Duration = Duration::from_secs(5);
 const NO_SPEED: &str = "—";
 
 enum DownloadEvent {
@@ -39,6 +40,7 @@ pub struct DownloadManager {
     entries: Vec<DownloadEntry>,
     tasks: Vec<Task>,
     status: String,
+    status_set_at: Instant,
     events_tx: UnboundedSender<DownloadEvent>,
     events_rx: UnboundedReceiver<DownloadEvent>,
     last_persist: Instant,
@@ -65,6 +67,7 @@ impl DownloadManager {
             entries,
             tasks,
             status: String::new(),
+            status_set_at: Instant::now(),
             events_tx,
             events_rx,
             last_persist: Instant::now(),
@@ -78,7 +81,8 @@ impl DownloadManager {
     }
 
     pub fn status(&self) -> Option<&str> {
-        (!self.status.is_empty()).then_some(&self.status)
+        (!self.status.is_empty() && self.status_set_at.elapsed() < STATUS_TTL)
+            .then_some(&self.status)
     }
 
     pub async fn recv_event(&mut self) -> Option<()> {
@@ -111,6 +115,7 @@ impl DownloadManager {
                 entry.status = status.clone();
                 entry.speed = NO_SPEED.to_owned();
                 self.status = format!("{}: {status}", entry.name);
+                self.status_set_at = Instant::now();
                 self.tasks[index] = Task {
                     id,
                     ..Task::default()
@@ -149,6 +154,7 @@ impl DownloadManager {
     pub fn start_download(&mut self, provider_id: &str, input: String) {
         let Some(provider) = dm_providers::find_provider(provider_id) else {
             self.status = format!("Unknown provider: {provider_id}");
+            self.status_set_at = Instant::now();
             return;
         };
         let input = input.trim().to_owned();
@@ -156,6 +162,7 @@ impl DownloadManager {
             Ok(resolved) => resolved,
             Err(message) => {
                 self.status = message;
+                self.status_set_at = Instant::now();
                 return;
             }
         };
@@ -163,6 +170,7 @@ impl DownloadManager {
             .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
         else {
             self.status = "Could not find the Downloads folder".to_owned();
+            self.status_set_at = Instant::now();
             return;
         };
 
@@ -179,6 +187,7 @@ impl DownloadManager {
             DestinationKind::Folder => (resolved.name, downloads),
         };
         self.status = format!("Downloading to {}", destination.display());
+        self.status_set_at = Instant::now();
         self.entries.push(DownloadEntry {
             name,
             provider: provider.name().to_owned(),
@@ -242,6 +251,7 @@ impl DownloadManager {
         } else {
             format!("Removed {}", entry.name)
         };
+        self.status_set_at = Instant::now();
         self.save();
     }
 
@@ -308,6 +318,7 @@ impl DownloadManager {
         self.last_persist = Instant::now();
         if let Err(error) = store::save(&self.entries) {
             self.status = format!("Could not save the download queue: {error:#}");
+            self.status_set_at = Instant::now();
         }
     }
 }

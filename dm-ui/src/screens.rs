@@ -1,4 +1,5 @@
 pub mod downloads;
+pub mod provider;
 pub mod settings;
 pub mod splash;
 
@@ -8,4 +9,5 @@ pub enum Screen {
     Splash,
     Downloads,
     Settings,
+    Provider,
 }

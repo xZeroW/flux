@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+pub mod cloud;
 pub mod direct_download;
 pub mod torrent;
 
@@ -57,6 +58,7 @@ pub fn providers() -> &'static [&'static dyn DownloadProvider] {
     &[
         &direct_download::DirectDownloadProvider,
         &torrent::TorrentProvider,
+        &cloud::gdrive::GoogleDrive,
     ]
 }
 
@@ -113,7 +115,7 @@ mod tests {
     #[test]
     fn commands_are_filtered_by_name() {
         assert_eq!(commands_matching("TORR").len(), 1);
-        assert_eq!(commands_matching("").len(), providers().len());
+        assert_eq!(commands_matching("").len(), 2); // cloud providers have no palette commands
         assert!(commands_matching("zzz").is_empty());
     }
 }

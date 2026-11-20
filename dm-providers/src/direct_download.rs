@@ -74,6 +74,16 @@ impl DownloadProvider for DirectDownloadProvider {
 pub async fn download_with_progress(
     url: &str,
     destination: impl AsRef<Path>,
+    paused: watch::Receiver<bool>,
+    progress: impl FnMut(u64, Option<u64>),
+) -> Result<()> {
+    download_authorized(url, None, destination, paused, progress).await
+}
+
+pub async fn download_authorized(
+    url: &str,
+    bearer: Option<&str>,
+    destination: impl AsRef<Path>,
     mut paused: watch::Receiver<bool>,
     mut progress: impl FnMut(u64, Option<u64>),
 ) -> Result<()> {
@@ -87,6 +97,9 @@ pub async fn download_with_progress(
         .unwrap_or(0);
     let client = reqwest::Client::new();
     let mut request = client.get(url);
+    if let Some(token) = bearer {
+        request = request.bearer_auth(token);
+    }
     if offset > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
     }
