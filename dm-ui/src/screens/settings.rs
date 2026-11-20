@@ -8,12 +8,20 @@ use ratatui::{
 
 pub struct SettingsScreen {
     pub skip_splash: bool,
+    pub progress_bar: bool,
+    pub selected_setting: usize,
     pub focused: bool,
 }
 
 impl Widget for SettingsScreen {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let checkbox = if self.skip_splash { "[x]" } else { "[ ]" };
+        let progress_mode = if self.progress_bar {
+            "Progress bar"
+        } else {
+            "Text"
+        };
+        let progress_label = format!(" Download progress: {progress_mode}");
         let border_style = if self.focused {
             Style::default().fg(Color::Cyan)
         } else {
@@ -25,13 +33,17 @@ impl Widget for SettingsScreen {
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from(vec![
-                Span::styled(checkbox, Style::default().fg(Color::Cyan)),
-                Span::raw(" Skip splash screen on startup"),
-            ]),
+            setting_line(
+                0,
+                self.selected_setting,
+                checkbox,
+                " Skip splash screen on startup",
+            ),
+            Line::from(""),
+            setting_line(1, self.selected_setting, "[x]", &progress_label),
             Line::from(""),
             Line::from(Span::styled(
-                "Press Space or Enter to toggle",
+                "Use Up/Down to select; Enter or Space to toggle",
                 Style::default().fg(Color::DarkGray),
             )),
         ])
@@ -44,4 +56,18 @@ impl Widget for SettingsScreen {
         );
         settings.render(area, buf);
     }
+}
+
+fn setting_line<'a>(index: usize, selected: usize, checkbox: &'a str, label: &'a str) -> Line<'a> {
+    let style = if index == selected {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    Line::from(vec![
+        Span::styled(checkbox, style),
+        Span::styled(label, style),
+    ])
 }

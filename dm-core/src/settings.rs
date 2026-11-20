@@ -7,6 +7,15 @@ use std::{fs, path::PathBuf};
 #[serde(default)]
 pub struct Settings {
     pub skip_splash: bool,
+    pub progress_display: ProgressDisplay,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressDisplay {
+    #[default]
+    Bar,
+    Text,
 }
 
 impl Settings {

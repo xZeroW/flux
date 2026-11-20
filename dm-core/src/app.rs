@@ -1,4 +1,7 @@
-use crate::settings::Settings;
+use crate::{
+    downloads::DownloadManager,
+    settings::{ProgressDisplay, Settings},
+};
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use dm_ui::screens::{
@@ -28,6 +31,7 @@ pub struct App {
     sidebar_selection: SidebarItem,
     focus: Focus,
     selected_download: usize,
+    selected_setting: usize,
     exit: bool,
     splash_started: Instant,
     settings: Settings,
@@ -35,9 +39,7 @@ pub struct App {
     command_query: String,
     selected_command: usize,
     input_popup: Option<ProviderInput>,
-    download_status: String,
-    download_results_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    download_results_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    downloads: DownloadManager,
 }
 
 struct ProviderInput {
@@ -48,7 +50,6 @@ struct ProviderInput {
 impl App {
     pub fn new() -> Result<Self> {
         let settings = Settings::load()?;
-        let (download_results_tx, download_results_rx) = tokio::sync::mpsc::unbounded_channel();
         let current_screen = if settings.skip_splash {
             Screen::Downloads
         } else {
@@ -59,6 +60,7 @@ impl App {
             sidebar_selection: SidebarItem::Downloads,
             focus: Focus::Content,
             selected_download: 0,
+            selected_setting: 0,
             exit: false,
             splash_started: Instant::now(),
             settings,
@@ -66,9 +68,7 @@ impl App {
             command_query: String::new(),
             selected_command: 0,
             input_popup: None,
-            download_status: String::new(),
-            download_results_tx,
-            download_results_rx,
+            downloads: DownloadManager::new(),
         })
     }
 
@@ -81,7 +81,7 @@ impl App {
 
             tokio::select! {
                 event = events.next() => self.handle_event(event.transpose()?)?,
-                Some(status) = self.download_results_rx.recv() => self.download_status = status,
+                Some(()) = self.downloads.recv_event() => {},
                 _ = animation_tick.tick(), if matches!(&self.current_screen, Screen::Splash) => {
                     if self.splash_started.elapsed() >= Duration::from_secs(2) {
                         self.current_screen = Screen::Downloads;
@@ -121,12 +121,16 @@ impl App {
                 DownloadsScreen {
                     focused: self.focus == Focus::Content,
                     selected_row: self.selected_download,
+                    downloads: self.downloads.entries().to_vec(),
+                    progress_bar: self.settings.progress_display == ProgressDisplay::Bar,
                 },
                 main_area,
             ),
             Screen::Settings => frame.render_widget(
                 SettingsScreen {
                     skip_splash: self.settings.skip_splash,
+                    progress_bar: self.settings.progress_display == ProgressDisplay::Bar,
+                    selected_setting: self.selected_setting,
                     focused: self.focus == Focus::Content,
                 },
                 main_area,
@@ -135,7 +139,7 @@ impl App {
         }
         frame.render_widget(
             Footer {
-                message: (!self.download_status.is_empty()).then_some(&self.download_status),
+                message: self.downloads.status(),
             },
             footer_area,
         );
@@ -211,7 +215,8 @@ impl App {
                 if self.focus == Focus::Content
                     && matches!(self.current_screen, Screen::Downloads) =>
             {
-                self.selected_download = (self.selected_download + 1).min(2);
+                self.selected_download = (self.selected_download + 1)
+                    .min(self.downloads.entries().len().saturating_sub(1));
             }
             KeyCode::Char('k') | KeyCode::Up
                 if self.focus == Focus::Content
@@ -219,12 +224,24 @@ impl App {
             {
                 self.selected_download = self.selected_download.saturating_sub(1);
             }
+            KeyCode::Char('j') | KeyCode::Down
+                if self.focus == Focus::Content
+                    && matches!(self.current_screen, Screen::Settings) =>
+            {
+                self.selected_setting = (self.selected_setting + 1).min(1);
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self.focus == Focus::Content
+                    && matches!(self.current_screen, Screen::Settings) =>
+            {
+                self.selected_setting = self.selected_setting.saturating_sub(1);
+            }
             KeyCode::Enter if self.focus == Focus::Sidebar => self.activate_sidebar_selection(),
             KeyCode::Enter | KeyCode::Char(' ')
                 if self.focus == Focus::Content
                     && matches!(self.current_screen, Screen::Settings) =>
             {
-                self.toggle_skip_splash()?;
+                self.toggle_selected_setting()?;
             }
             KeyCode::Char('s' | 'S') => {
                 self.current_screen = Screen::Settings;
@@ -288,7 +305,8 @@ impl App {
             KeyCode::Esc => self.input_popup = None,
             KeyCode::Enter => {
                 if let Some(input) = self.input_popup.take() {
-                    self.start_direct_download(input.value);
+                    self.downloads.start_direct_download(input.value);
+                    self.selected_download = self.downloads.entries().len().saturating_sub(1);
                 }
             }
             KeyCode::Backspace => {
@@ -299,39 +317,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    fn start_direct_download(&mut self, url: String) {
-        let Some(filename) = url
-            .split(['?', '#'])
-            .next()
-            .and_then(|url| url.rsplit('/').next())
-            .filter(|name| !name.is_empty())
-            .map(|name| name.to_owned())
-        else {
-            self.download_status = "URL must include a filename".to_owned();
-            return;
-        };
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            self.download_status = "URL must start with http:// or https://".to_owned();
-            return;
-        }
-        let Some(downloads) = directories::UserDirs::new()
-            .and_then(|dirs| dirs.download_dir().map(std::path::Path::to_path_buf))
-        else {
-            self.download_status = "Could not find the Downloads folder".to_owned();
-            return;
-        };
-        let destination = downloads.join(filename);
-        let tx = self.download_results_tx.clone();
-        self.download_status = format!("Downloading to {}", destination.display());
-        tokio::spawn(async move {
-            let status = match dm_providers::direct_download::download(&url, &destination).await {
-                Ok(()) => format!("Download complete: {}", destination.display()),
-                Err(error) => format!("Download failed: {error:#}"),
-            };
-            let _ = tx.send(status);
-        });
     }
 
     fn filtered_commands(&self) -> Vec<String> {
@@ -378,8 +363,17 @@ impl App {
         }
     }
 
-    fn toggle_skip_splash(&mut self) -> Result<()> {
-        self.settings.skip_splash = !self.settings.skip_splash;
+    fn toggle_selected_setting(&mut self) -> Result<()> {
+        match self.selected_setting {
+            0 => self.settings.skip_splash = !self.settings.skip_splash,
+            1 => {
+                self.settings.progress_display = match self.settings.progress_display {
+                    ProgressDisplay::Bar => ProgressDisplay::Text,
+                    ProgressDisplay::Text => ProgressDisplay::Bar,
+                };
+            }
+            _ => {}
+        }
         self.settings.save()
     }
 
