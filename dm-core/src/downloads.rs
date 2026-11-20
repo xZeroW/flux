@@ -1,7 +1,4 @@
-use dm_providers::{
-    DownloadProgress, DownloadProvider, DownloadRequest, ProgressReporter,
-    direct_download::DirectDownloadProvider,
-};
+use dm_providers::{DestinationKind, DownloadProgress, DownloadRequest, ProgressReporter};
 use dm_ui::screens::downloads::DownloadEntry;
 use std::{
     fs,
@@ -114,21 +111,19 @@ impl DownloadManager {
         }
     }
 
-    pub fn start_direct_download(&mut self, url: String) {
-        let Some(filename) = url
-            .split(['?', '#'])
-            .next()
-            .and_then(|url| url.rsplit('/').next())
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-        else {
-            self.status = "URL must include a filename".to_owned();
+    pub fn start_download(&mut self, provider_id: &str, input: String) {
+        let Some(provider) = dm_providers::find_provider(provider_id) else {
+            self.status = format!("Unknown provider: {provider_id}");
             return;
         };
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            self.status = "URL must start with http:// or https://".to_owned();
-            return;
-        }
+        let resolved = match provider.resolve(input.trim()) {
+            Ok(resolved) => resolved,
+            Err(message) => {
+                self.status = message;
+                return;
+            }
+        };
+        let input = input.trim().to_owned();
         let Some(downloads) = directories::UserDirs::new()
             .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
         else {
@@ -136,20 +131,27 @@ impl DownloadManager {
             return;
         };
 
-        let destination = self.unique_destination(&downloads, &filename);
+        let (name, destination) = match resolved.destination {
+            DestinationKind::File => {
+                let destination = self.unique_destination(&downloads, &resolved.name);
+                let name = destination
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                (name, destination)
+            }
+            DestinationKind::Folder => (resolved.name, downloads),
+        };
         let index = self.entries.len();
         self.entries.push(DownloadEntry {
-            name: destination
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
-            provider: "Direct".to_owned(),
+            name,
+            provider: provider.name().to_owned(),
             received: 0,
             total: None,
             speed: "—".to_owned(),
             status: "Downloading".to_owned(),
-            url: url.clone(),
+            url: input,
             destination: destination.display().to_string(),
         });
         self.last_progress.push((Instant::now(), 0));
@@ -192,6 +194,7 @@ impl DownloadManager {
         let entry = &self.entries[index];
         let url = entry.url.clone();
         let destination = PathBuf::from(&entry.destination);
+        let provider = dm_providers::find_provider(&entry.provider);
         let tx = self.events_tx.clone();
         tokio::spawn(async move {
             let progress_tx = tx.clone();
@@ -203,17 +206,21 @@ impl DownloadManager {
                         progress.total_bytes,
                     ));
                 });
-            let provider = DirectDownloadProvider;
-            let result = provider
-                .download(
-                    DownloadRequest {
-                        url,
-                        destination,
-                        paused,
-                    },
-                    progress,
-                )
-                .await;
+            let result = match provider {
+                Some(provider) => {
+                    provider
+                        .download(
+                            DownloadRequest {
+                                url,
+                                destination,
+                                paused,
+                            },
+                            progress,
+                        )
+                        .await
+                }
+                None => Err(anyhow::anyhow!("provider is no longer available")),
+            };
             let status = match result {
                 Ok(()) => "Complete".to_owned(),
                 Err(error) => format!("Failed: {error:#}"),

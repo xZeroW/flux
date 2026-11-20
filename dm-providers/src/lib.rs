@@ -1,11 +1,26 @@
 use std::{path::PathBuf, sync::Arc};
 
 pub mod direct_download;
+pub mod torrent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCommand {
     pub name: &'static str,
     pub description: &'static str,
+    pub provider_id: &'static str,
+    pub input_prompt: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationKind {
+    File,
+    Folder,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedDownload {
+    pub name: String,
+    pub destination: DestinationKind,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +44,8 @@ pub trait DownloadProvider: Send + Sync {
     fn name(&self) -> &'static str;
     fn commands(&self) -> &'static [ProviderCommand];
 
+    fn resolve(&self, input: &str) -> Result<ResolvedDownload, String>;
+
     async fn download(
         &self,
         request: DownloadRequest,
@@ -37,7 +54,10 @@ pub trait DownloadProvider: Send + Sync {
 }
 
 pub fn providers() -> &'static [&'static dyn DownloadProvider] {
-    &[&direct_download::DirectDownloadProvider]
+    &[
+        &direct_download::DirectDownloadProvider,
+        &torrent::TorrentProvider,
+    ]
 }
 
 pub fn commands_matching(query: &str) -> Vec<ProviderCommand> {
@@ -47,4 +67,11 @@ pub fn commands_matching(query: &str) -> Vec<ProviderCommand> {
         .flat_map(|provider| provider.commands().iter().copied())
         .filter(|command| command.name.to_lowercase().contains(&query))
         .collect()
+}
+
+pub fn find_provider(label: &str) -> Option<&'static dyn DownloadProvider> {
+    providers()
+        .iter()
+        .copied()
+        .find(|provider| provider.name() == label || provider.id().eq_ignore_ascii_case(label))
 }

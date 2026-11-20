@@ -44,6 +44,7 @@ pub struct App {
 }
 
 struct ProviderInput {
+    provider_id: &'static str,
     title: String,
     value: String,
 }
@@ -110,7 +111,7 @@ impl App {
             .areas(frame.area());
         let [sidebar_area, main_area] = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(26), Constraint::Min(0)])
+            .constraints([Constraint::Percentage(14), Constraint::Min(10)])
             .areas(content_area);
 
         let provider_names: Vec<&str> = dm_providers::providers()
@@ -290,11 +291,10 @@ impl App {
             KeyCode::Enter => {
                 let commands = self.filtered_commands();
                 self.command_palette_open = false;
-                if let Some(command) = commands.get(self.selected_command)
-                    && command.name == "direct-download"
-                {
+                if let Some(command) = commands.get(self.selected_command) {
                     self.input_popup = Some(ProviderInput {
-                        title: "Direct download URL".to_owned(),
+                        provider_id: command.provider_id,
+                        title: command.input_prompt.to_owned(),
                         value: String::new(),
                     });
                 }
@@ -328,7 +328,8 @@ impl App {
             KeyCode::Esc => self.input_popup = None,
             KeyCode::Enter => {
                 if let Some(input) = self.input_popup.take() {
-                    self.downloads.start_direct_download(input.value);
+                    self.downloads
+                        .start_download(input.provider_id, input.value);
                     self.selected_download = self.downloads.entries().len().saturating_sub(1);
                 }
             }

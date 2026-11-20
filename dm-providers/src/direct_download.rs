@@ -4,13 +4,16 @@ use std::path::Path;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::watch};
 
 use crate::{
-    DownloadProgress, DownloadProvider, DownloadRequest, ProgressReporter, ProviderCommand,
+    DestinationKind, DownloadProgress, DownloadProvider, DownloadRequest, ProgressReporter,
+    ProviderCommand, ResolvedDownload,
 };
 
 pub fn commands() -> &'static [ProviderCommand] {
     &[ProviderCommand {
         name: "direct-download",
         description: "Download a file from an HTTP/HTTPS URL",
+        provider_id: "direct",
+        input_prompt: "Direct download URL",
     }]
 }
 
@@ -29,6 +32,22 @@ impl DownloadProvider for DirectDownloadProvider {
 
     fn commands(&self) -> &'static [ProviderCommand] {
         commands()
+    }
+
+    fn resolve(&self, input: &str) -> Result<ResolvedDownload, String> {
+        if !input.starts_with("http://") && !input.starts_with("https://") {
+            return Err("URL must start with http:// or https://".to_owned());
+        }
+        let name = input
+            .split(['?', '#'])
+            .next()
+            .and_then(|url| url.rsplit('/').next())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| "URL must include a filename".to_owned())?;
+        Ok(ResolvedDownload {
+            name: name.to_owned(),
+            destination: DestinationKind::File,
+        })
     }
 
     async fn download(&self, request: DownloadRequest, progress: ProgressReporter) -> Result<()> {

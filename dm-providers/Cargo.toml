@@ -7,5 +7,6 @@ edition = "2024"
 anyhow = "1.0"
 async-trait = "0.1"
 futures-util = "0.3"
+librqbit = "9.1.0"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
-tokio = { version = "1", features = ["fs", "io-util"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "sync", "time"] }
