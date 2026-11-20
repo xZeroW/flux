@@ -9,8 +9,8 @@ use ratatui::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SidebarItem {
     Downloads,
-    History,
-    Queue,
+    // History,
+    // Queue,
     Settings,
     Provider(usize),
 }
@@ -19,8 +19,8 @@ impl SidebarItem {
     pub fn all(provider_count: usize) -> impl Iterator<Item = SidebarItem> {
         [
             SidebarItem::Downloads,
-            SidebarItem::History,
-            SidebarItem::Queue,
+            // SidebarItem::History,
+            // SidebarItem::Queue,
             SidebarItem::Settings,
         ]
         .into_iter()
@@ -73,8 +73,8 @@ impl Widget for Sidebar<'_> {
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             item_line("Downloads", SidebarItem::Downloads, self.selected),
-            item_line("History", SidebarItem::History, self.selected),
-            item_line("Queue", SidebarItem::Queue, self.selected),
+            // item_line("History", SidebarItem::History, self.selected),
+            // item_line("Queue", SidebarItem::Queue, self.selected),
             item_line("Settings", SidebarItem::Settings, self.selected),
             Line::from(""),
             Line::from(Span::styled(
