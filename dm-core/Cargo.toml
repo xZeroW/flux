@@ -8,6 +8,7 @@ anyhow = "1.0.104"
 crossterm.workspace = true
 directories = "6.0"
 dm-ui = { path = "../dm-ui" }
+dm-providers = { path = "../dm-providers" }
 futures-util = "0.3"
 ratatui.workspace = true
 serde = { version = "1.0", features = ["derive"] }

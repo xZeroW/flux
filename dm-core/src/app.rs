@@ -5,7 +5,9 @@ use dm_ui::screens::{
     Screen, downloads::DownloadsScreen, settings::SettingsScreen, splash::SplashScreen,
 };
 use dm_ui::widgets::{
+    command_palette::CommandPalette,
     footer::Footer,
+    input_popup::InputPopup,
     sidebar::{Sidebar, SidebarItem},
 };
 use futures_util::StreamExt;
@@ -29,11 +31,24 @@ pub struct App {
     exit: bool,
     splash_started: Instant,
     settings: Settings,
+    command_palette_open: bool,
+    command_query: String,
+    selected_command: usize,
+    input_popup: Option<ProviderInput>,
+    download_status: String,
+    download_results_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    download_results_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+}
+
+struct ProviderInput {
+    title: String,
+    value: String,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
         let settings = Settings::load()?;
+        let (download_results_tx, download_results_rx) = tokio::sync::mpsc::unbounded_channel();
         let current_screen = if settings.skip_splash {
             Screen::Downloads
         } else {
@@ -47,6 +62,13 @@ impl App {
             exit: false,
             splash_started: Instant::now(),
             settings,
+            command_palette_open: false,
+            command_query: String::new(),
+            selected_command: 0,
+            input_popup: None,
+            download_status: String::new(),
+            download_results_tx,
+            download_results_rx,
         })
     }
 
@@ -59,6 +81,7 @@ impl App {
 
             tokio::select! {
                 event = events.next() => self.handle_event(event.transpose()?)?,
+                Some(status) = self.download_results_rx.recv() => self.download_status = status,
                 _ = animation_tick.tick(), if matches!(&self.current_screen, Screen::Splash) => {
                     if self.splash_started.elapsed() >= Duration::from_secs(2) {
                         self.current_screen = Screen::Downloads;
@@ -110,7 +133,32 @@ impl App {
             ),
             Screen::Splash => unreachable!("splash is drawn without the main layout"),
         }
-        frame.render_widget(Footer, footer_area);
+        frame.render_widget(
+            Footer {
+                message: (!self.download_status.is_empty()).then_some(&self.download_status),
+            },
+            footer_area,
+        );
+        if self.command_palette_open {
+            let commands = self.filtered_commands();
+            frame.render_widget(
+                CommandPalette {
+                    query: &self.command_query,
+                    commands: &commands,
+                    selected: self.selected_command,
+                },
+                frame.area(),
+            );
+        }
+        if let Some(input) = &self.input_popup {
+            frame.render_widget(
+                InputPopup {
+                    title: &input.title,
+                    value: &input.value,
+                },
+                frame.area(),
+            );
+        }
     }
 
     fn handle_event(&mut self, event: Option<Event>) -> Result<()> {
@@ -129,7 +177,21 @@ impl App {
     }
 
     fn handle_key_pressed(&mut self, key_event: KeyEvent) -> Result<()> {
+        if self.input_popup.is_some() {
+            self.handle_input_key(key_event.code);
+            return Ok(());
+        }
+        if self.command_palette_open {
+            self.handle_command_palette_key(key_event.code);
+            return Ok(());
+        }
+
         match key_event.code {
+            KeyCode::Char(':') => {
+                self.command_palette_open = true;
+                self.command_query.clear();
+                self.selected_command = 0;
+            }
             KeyCode::Char('q' | 'Q') => self.exit(),
             KeyCode::Tab => {
                 self.focus = match self.focus {
@@ -180,6 +242,109 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn handle_command_palette_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Esc => self.command_palette_open = false,
+            KeyCode::Enter => {
+                let commands = self.filtered_commands();
+                self.command_palette_open = false;
+                if let Some(command) = commands.get(self.selected_command)
+                    && command.starts_with("direct-download ")
+                {
+                    self.input_popup = Some(ProviderInput {
+                        title: "Direct download URL".to_owned(),
+                        value: String::new(),
+                    });
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.selected_command = self.selected_command.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let count = self.filtered_commands().len();
+                if count > 0 {
+                    self.selected_command = (self.selected_command + 1).min(count - 1);
+                }
+            }
+            KeyCode::Backspace => {
+                self.command_query.pop();
+                self.selected_command = 0;
+            }
+            KeyCode::Char(character) if !character.is_control() => {
+                self.command_query.push(character);
+                self.selected_command = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_input_key(&mut self, key: KeyCode) {
+        let Some(input) = self.input_popup.as_mut() else {
+            return;
+        };
+        match key {
+            KeyCode::Esc => self.input_popup = None,
+            KeyCode::Enter => {
+                if let Some(input) = self.input_popup.take() {
+                    self.start_direct_download(input.value);
+                }
+            }
+            KeyCode::Backspace => {
+                input.value.pop();
+            }
+            KeyCode::Char(character) if !character.is_control() => {
+                input.value.push(character);
+            }
+            _ => {}
+        }
+    }
+
+    fn start_direct_download(&mut self, url: String) {
+        let Some(filename) = url
+            .split(['?', '#'])
+            .next()
+            .and_then(|url| url.rsplit('/').next())
+            .filter(|name| !name.is_empty())
+            .map(|name| name.to_owned())
+        else {
+            self.download_status = "URL must include a filename".to_owned();
+            return;
+        };
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            self.download_status = "URL must start with http:// or https://".to_owned();
+            return;
+        }
+        let Some(downloads) = directories::UserDirs::new()
+            .and_then(|dirs| dirs.download_dir().map(std::path::Path::to_path_buf))
+        else {
+            self.download_status = "Could not find the Downloads folder".to_owned();
+            return;
+        };
+        let destination = downloads.join(filename);
+        let tx = self.download_results_tx.clone();
+        self.download_status = format!("Downloading to {}", destination.display());
+        tokio::spawn(async move {
+            let status = match dm_providers::direct_download::download(&url, &destination).await {
+                Ok(()) => format!("Download complete: {}", destination.display()),
+                Err(error) => format!("Download failed: {error:#}"),
+            };
+            let _ = tx.send(status);
+        });
+    }
+
+    fn filtered_commands(&self) -> Vec<String> {
+        dm_providers::commands()
+            .iter()
+            .filter(|command| {
+                command
+                    .name
+                    .to_lowercase()
+                    .contains(&self.command_query.to_lowercase())
+            })
+            .map(|command| format!("{} — {}", command.name, command.description))
+            .collect()
     }
 
     fn move_sidebar_selection(&mut self, forward: bool) {
