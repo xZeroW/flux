@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Padding, Paragraph, Row, StatefulWidget, Table, TableState, Widget},
 };
+use serde::{Deserialize, Serialize};
 
 pub struct DownloadsScreen {
     pub focused: bool,
@@ -13,7 +14,7 @@ pub struct DownloadsScreen {
     pub progress_bar: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct DownloadEntry {
     pub name: String,
     pub provider: String,

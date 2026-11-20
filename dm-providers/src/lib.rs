@@ -12,6 +12,7 @@ pub struct ProviderCommand {
 pub struct DownloadRequest {
     pub url: String,
     pub destination: PathBuf,
+    pub paused: tokio::sync::watch::Receiver<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

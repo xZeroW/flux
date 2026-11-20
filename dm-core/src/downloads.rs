@@ -3,9 +3,15 @@ use dm_providers::{
     direct_download::DirectDownloadProvider,
 };
 use dm_ui::screens::downloads::DownloadEntry;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    watch,
+};
 
 enum DownloadEvent {
     Progress(usize, u64, Option<u64>),
@@ -18,18 +24,38 @@ pub struct DownloadManager {
     events_tx: UnboundedSender<DownloadEvent>,
     events_rx: UnboundedReceiver<DownloadEvent>,
     last_progress: Vec<(Instant, u64)>,
+    controls: Vec<watch::Sender<bool>>,
+    active: Vec<bool>,
+    last_persist: Instant,
 }
 
 impl DownloadManager {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         let (events_tx, events_rx) = unbounded_channel();
-        Self {
-            entries: Vec::new(),
+        let entries = load_entries()?;
+        let mut manager = Self {
+            entries,
             status: String::new(),
             events_tx,
             events_rx,
             last_progress: Vec::new(),
+            controls: Vec::new(),
+            active: Vec::new(),
+            last_persist: Instant::now(),
+        };
+        for download in &mut manager.entries {
+            if download.status == "Downloading" {
+                download.status = "Paused".to_owned();
+            }
+            manager
+                .last_progress
+                .push((Instant::now(), download.received));
+            let (control, _receiver) = watch::channel(true);
+            manager.controls.push(control);
+            manager.active.push(false);
         }
+        manager.persist()?;
+        Ok(manager)
     }
 
     pub fn entries(&self) -> &[DownloadEntry] {
@@ -41,10 +67,12 @@ impl DownloadManager {
     }
 
     pub async fn recv_event(&mut self) -> Option<()> {
-        self.events_rx
-            .recv()
-            .await
-            .map(|event| self.handle_event(event))
+        let first = self.events_rx.recv().await?;
+        self.handle_event(first);
+        while let Ok(event) = self.events_rx.try_recv() {
+            self.handle_event(event);
+        }
+        Some(())
     }
 
     fn handle_event(&mut self, event: DownloadEvent) {
@@ -65,6 +93,10 @@ impl DownloadManager {
                         }
                         *last_time = now;
                         *last_received = received;
+                        if self.last_persist.elapsed() >= Duration::from_secs(2) {
+                            let _ = self.persist();
+                            self.last_persist = now;
+                        }
                     }
                 }
             }
@@ -74,6 +106,10 @@ impl DownloadManager {
                     download.speed = "—".to_owned();
                     self.status = format!("{}: {status}", download.name);
                 }
+                if let Some(active) = self.active.get_mut(index) {
+                    *active = false;
+                }
+                let _ = self.persist();
             }
         }
     }
@@ -117,8 +153,46 @@ impl DownloadManager {
             destination: destination.display().to_string(),
         });
         self.last_progress.push((Instant::now(), 0));
-        let tx = self.events_tx.clone();
+        let (control, receiver) = watch::channel(false);
+        self.controls.push(control);
+        self.active.push(true);
         self.status = format!("Downloading to {}", destination.display());
+        self.spawn_download(index, receiver);
+        let _ = self.persist();
+    }
+
+    pub fn toggle_pause(&mut self, index: usize) {
+        let Some(download) = self.entries.get_mut(index) else {
+            return;
+        };
+        if download.status == "Downloading" {
+            download.status = "Paused".to_owned();
+            download.speed = "—".to_owned();
+            if let Some(control) = self.controls.get(index) {
+                let _ = control.send(true);
+            }
+        } else if download.status == "Paused" || download.status.starts_with("Failed:") {
+            download.status = "Downloading".to_owned();
+            if let Some(progress) = self.last_progress.get_mut(index) {
+                *progress = (Instant::now(), download.received);
+            }
+            if !self.active.get(index).copied().unwrap_or(false) {
+                let (control, receiver) = watch::channel(false);
+                self.controls[index] = control;
+                self.active[index] = true;
+                self.spawn_download(index, receiver);
+            } else if let Some(control) = self.controls.get(index) {
+                let _ = control.send(false);
+            }
+        }
+        let _ = self.persist();
+    }
+
+    fn spawn_download(&self, index: usize, paused: watch::Receiver<bool>) {
+        let entry = &self.entries[index];
+        let url = entry.url.clone();
+        let destination = PathBuf::from(&entry.destination);
+        let tx = self.events_tx.clone();
         tokio::spawn(async move {
             let progress_tx = tx.clone();
             let progress: ProgressReporter =
@@ -131,7 +205,14 @@ impl DownloadManager {
                 });
             let provider = DirectDownloadProvider;
             let result = provider
-                .download(DownloadRequest { url, destination }, progress)
+                .download(
+                    DownloadRequest {
+                        url,
+                        destination,
+                        paused,
+                    },
+                    progress,
+                )
                 .await;
             let status = match result {
                 Ok(()) => "Complete".to_owned(),
@@ -168,6 +249,21 @@ impl DownloadManager {
         }
         unreachable!("an unused download filename should always be available")
     }
+
+    fn persist(&self) -> anyhow::Result<()> {
+        let path = queue_path()?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("download queue path has no parent"))?;
+        fs::create_dir_all(parent)?;
+        let contents = toml::to_string_pretty(&QueueFile {
+            downloads: self.entries.clone(),
+        })?;
+        let temporary = path.with_extension("toml.tmp");
+        fs::write(&temporary, contents)?;
+        fs::rename(temporary, path)?;
+        Ok(())
+    }
 }
 
 fn format_speed(bytes_per_second: f64) -> String {
@@ -183,6 +279,32 @@ fn format_speed(bytes_per_second: f64) -> String {
 
 impl Default for DownloadManager {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("failed to load the download queue")
+    }
+}
+
+impl Drop for DownloadManager {
+    fn drop(&mut self) {
+        let _ = self.persist();
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QueueFile {
+    #[serde(default)]
+    downloads: Vec<DownloadEntry>,
+}
+
+fn queue_path() -> anyhow::Result<PathBuf> {
+    directories::ProjectDirs::from("com", "Flux", "Flux")
+        .map(|dirs| dirs.data_dir().join("downloads.toml"))
+        .ok_or_else(|| anyhow::anyhow!("could not determine application data directory"))
+}
+
+fn load_entries() -> anyhow::Result<Vec<DownloadEntry>> {
+    match fs::read_to_string(queue_path()?) {
+        Ok(contents) => Ok(toml::from_str::<QueueFile>(&contents)?.downloads),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
     }
 }

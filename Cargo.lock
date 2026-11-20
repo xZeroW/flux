@@ -428,6 +428,7 @@ name = "dm-ui"
 version = "0.1.0"
 dependencies = [
  "ratatui",
+ "serde",
 ]
 
 [[package]]

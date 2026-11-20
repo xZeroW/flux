@@ -68,7 +68,7 @@ impl App {
             command_query: String::new(),
             selected_command: 0,
             input_popup: None,
-            downloads: DownloadManager::new(),
+            downloads: DownloadManager::new()?,
         })
     }
 
@@ -197,6 +197,12 @@ impl App {
                 self.selected_command = 0;
             }
             KeyCode::Char('q' | 'Q') => self.exit(),
+            KeyCode::Char('p' | 'P')
+                if matches!(self.current_screen, Screen::Downloads)
+                    && self.focus == Focus::Content =>
+            {
+                self.downloads.toggle_pause(self.selected_download);
+            }
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::Sidebar => Focus::Content,
