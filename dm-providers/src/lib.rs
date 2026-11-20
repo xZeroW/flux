@@ -40,9 +40,11 @@ pub fn providers() -> &'static [&'static dyn DownloadProvider] {
     &[&direct_download::DirectDownloadProvider]
 }
 
-pub fn commands() -> Vec<ProviderCommand> {
+pub fn commands_matching(query: &str) -> Vec<ProviderCommand> {
+    let query = query.to_lowercase();
     providers()
         .iter()
         .flat_map(|provider| provider.commands().iter().copied())
+        .filter(|command| command.name.to_lowercase().contains(&query))
         .collect()
 }

@@ -19,6 +19,22 @@ pub enum ProgressDisplay {
 }
 
 impl Settings {
+    pub const COUNT: usize = 2;
+
+    pub fn toggle(&mut self, index: usize) -> Result<()> {
+        match index {
+            0 => self.skip_splash = !self.skip_splash,
+            1 => {
+                self.progress_display = match self.progress_display {
+                    ProgressDisplay::Bar => ProgressDisplay::Text,
+                    ProgressDisplay::Text => ProgressDisplay::Bar,
+                };
+            }
+            _ => return Ok(()),
+        }
+        self.save()
+    }
+
     pub fn load() -> Result<Self> {
         let Some(path) = settings_path() else {
             return Ok(Self::default());

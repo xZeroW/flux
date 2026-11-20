@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
+use dm_providers::ProviderCommand;
 use dm_ui::screens::{
     Screen, downloads::DownloadsScreen, settings::SettingsScreen, splash::SplashScreen,
 };
@@ -152,7 +153,11 @@ impl App {
             footer_area,
         );
         if self.command_palette_open {
-            let commands = self.filtered_commands();
+            let commands: Vec<String> = self
+                .filtered_commands()
+                .iter()
+                .map(|command| format!("{} — {}", command.name, command.description))
+                .collect();
             frame.render_widget(
                 CommandPalette {
                     query: &self.command_query,
@@ -220,10 +225,14 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left => self.focus = Focus::Sidebar,
             KeyCode::Char('l') | KeyCode::Right => self.focus = Focus::Content,
             KeyCode::Char('j') | KeyCode::Down if self.focus == Focus::Sidebar => {
-                self.move_sidebar_selection(true);
+                self.sidebar_selection = self
+                    .sidebar_selection
+                    .step(true, dm_providers::providers().len());
             }
             KeyCode::Char('k') | KeyCode::Up if self.focus == Focus::Sidebar => {
-                self.move_sidebar_selection(false);
+                self.sidebar_selection = self
+                    .sidebar_selection
+                    .step(false, dm_providers::providers().len());
             }
             KeyCode::Char('j') | KeyCode::Down
                 if self.focus == Focus::Content
@@ -242,7 +251,7 @@ impl App {
                 if self.focus == Focus::Content
                     && matches!(self.current_screen, Screen::Settings) =>
             {
-                self.selected_setting = (self.selected_setting + 1).min(1);
+                self.selected_setting = (self.selected_setting + 1).min(Settings::COUNT - 1);
             }
             KeyCode::Char('k') | KeyCode::Up
                 if self.focus == Focus::Content
@@ -255,7 +264,7 @@ impl App {
                 if self.focus == Focus::Content
                     && matches!(self.current_screen, Screen::Settings) =>
             {
-                self.toggle_selected_setting()?;
+                self.settings.toggle(self.selected_setting)?;
             }
             KeyCode::Char('s' | 'S') => {
                 self.current_screen = Screen::Settings;
@@ -282,7 +291,7 @@ impl App {
                 let commands = self.filtered_commands();
                 self.command_palette_open = false;
                 if let Some(command) = commands.get(self.selected_command)
-                    && command.starts_with("direct-download ")
+                    && command.name == "direct-download"
                 {
                     self.input_popup = Some(ProviderInput {
                         title: "Direct download URL".to_owned(),
@@ -333,39 +342,8 @@ impl App {
         }
     }
 
-    fn filtered_commands(&self) -> Vec<String> {
-        dm_providers::commands()
-            .iter()
-            .filter(|command| {
-                command
-                    .name
-                    .to_lowercase()
-                    .contains(&self.command_query.to_lowercase())
-            })
-            .map(|command| format!("{} — {}", command.name, command.description))
-            .collect()
-    }
-
-    fn move_sidebar_selection(&mut self, forward: bool) {
-        let items: Vec<SidebarItem> = [
-            SidebarItem::Downloads,
-            SidebarItem::History,
-            SidebarItem::Queue,
-            SidebarItem::Settings,
-        ]
-        .into_iter()
-        .chain((0..dm_providers::providers().len()).map(SidebarItem::Provider))
-        .collect();
-        let index = items
-            .iter()
-            .position(|item| *item == self.sidebar_selection)
-            .unwrap_or(0);
-        let next_index = if forward {
-            (index + 1) % items.len()
-        } else {
-            (index + items.len() - 1) % items.len()
-        };
-        self.sidebar_selection = items[next_index];
+    fn filtered_commands(&self) -> Vec<ProviderCommand> {
+        dm_providers::commands_matching(&self.command_query)
     }
 
     fn activate_sidebar_selection(&mut self) {
@@ -374,20 +352,6 @@ impl App {
             SidebarItem::Settings => self.current_screen = Screen::Settings,
             _ => {}
         }
-    }
-
-    fn toggle_selected_setting(&mut self) -> Result<()> {
-        match self.selected_setting {
-            0 => self.settings.skip_splash = !self.settings.skip_splash,
-            1 => {
-                self.settings.progress_display = match self.settings.progress_display {
-                    ProgressDisplay::Bar => ProgressDisplay::Text,
-                    ProgressDisplay::Text => ProgressDisplay::Bar,
-                };
-            }
-            _ => {}
-        }
-        self.settings.save()
     }
 
     fn exit(&mut self) {

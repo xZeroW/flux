@@ -15,6 +15,30 @@ pub enum SidebarItem {
     Provider(usize),
 }
 
+impl SidebarItem {
+    pub fn all(provider_count: usize) -> impl Iterator<Item = SidebarItem> {
+        [
+            SidebarItem::Downloads,
+            SidebarItem::History,
+            SidebarItem::Queue,
+            SidebarItem::Settings,
+        ]
+        .into_iter()
+        .chain((0..provider_count).map(SidebarItem::Provider))
+    }
+
+    pub fn step(self, forward: bool, provider_count: usize) -> SidebarItem {
+        let items: Vec<_> = Self::all(provider_count).collect();
+        let index = items.iter().position(|item| *item == self).unwrap_or(0);
+        let next = if forward {
+            (index + 1) % items.len()
+        } else {
+            (index + items.len() - 1) % items.len()
+        };
+        items[next]
+    }
+}
+
 pub struct Sidebar<'a> {
     selected: SidebarItem,
     focused: bool,
