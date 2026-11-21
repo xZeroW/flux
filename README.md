@@ -1,5 +1,7 @@
 # Flux
 
+[![CI](https://github.com/xZeroW/tui-download-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/xZeroW/tui-download-manager/actions/workflows/ci.yml)
+
 A fast, keyboard-driven terminal download manager written in Rust, built with [ratatui](https://ratatui.rs).
 
 <p align="center">

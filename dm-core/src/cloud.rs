@@ -354,3 +354,9 @@ impl CloudManager {
         }
     }
 }
+
+impl Default for CloudManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
