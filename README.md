@@ -2,7 +2,9 @@
 
 A fast, keyboard-driven terminal download manager written in Rust, built with [ratatui](https://ratatui.rs).
 
-![Flux demo](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo.gif" alt="Flux demo" width="900">
+</p>
 
 ## Features
 
