@@ -86,7 +86,8 @@ impl DownloadProvider for TorrentProvider {
                 Some(AddTorrentOptions {
                     paused: start_paused,
                     overwrite: true,
-                    output_folder: Some(destination.display().to_string()),
+                    // No explicit output folder: librqbit then puts multi-file torrents in a
+                    // folder named after the torrent, inside the session's folder.
                     ..Default::default()
                 }),
             )
