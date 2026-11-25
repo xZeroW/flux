@@ -12,6 +12,15 @@ pub struct DownloadsScreen<'a> {
     pub selected_row: usize,
     pub downloads: &'a [DownloadEntry],
     pub progress_bar: bool,
+    pub details_tab: DetailsTab,
+    pub files_scroll: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DetailsTab {
+    #[default]
+    Info,
+    Files,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -65,9 +74,84 @@ pub struct DownloadEntry {
     pub status: DownloadStatus,
     pub url: String,
     pub destination: String,
+    /// Live swarm details; only known while a torrent is running.
+    #[serde(skip)]
+    pub torrent: Option<TorrentDetails>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TorrentFile {
+    pub path: String,
+    pub size: u64,
+    pub downloaded: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TorrentDetails {
+    pub info_hash: String,
+    pub seeders: u32,
+    pub leechers: u32,
+    pub connecting: u32,
+    pub queued: u32,
+    pub peers_seen: u32,
+    pub uploaded_bytes: u64,
+    pub upload_speed: u64,
+    pub eta: Option<String>,
+    pub files: Vec<TorrentFile>,
 }
 
 impl DownloadEntry {
+    fn file_lines(&self) -> Vec<Line<'static>> {
+        let files = self.torrent.as_ref().map_or(&[][..], |t| &t.files[..]);
+        files
+            .iter()
+            .map(|file| {
+                let percent = if file.size > 0 {
+                    file.downloaded.min(file.size) as f64 * 100.0 / file.size as f64
+                } else {
+                    100.0
+                };
+                Line::from(format!(
+                    "{} — {} ({percent:.0}%)",
+                    file.path,
+                    format_bytes(file.size)
+                ))
+            })
+            .collect()
+    }
+
+    fn detail_lines(&self, progress_bar: bool) -> Vec<Line<'static>> {
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let mut lines = vec![
+            Line::from(Span::styled("DETAILS", bold)),
+            Line::from(Span::styled(format!("File: {}", self.name), bold)),
+            Line::from(format!("URL: {}", self.url)),
+            Line::from(format!("Progress: {}", self.progress(progress_bar))),
+            Line::from(format!("Destination: {}", self.destination)),
+        ];
+        let Some(torrent) = &self.torrent else {
+            return lines;
+        };
+        lines.push(Line::from(format!(
+            "Seeders: {}   Leechers: {}   Connecting: {}   Queued: {}   Seen: {}",
+            torrent.seeders,
+            torrent.leechers,
+            torrent.connecting,
+            torrent.queued,
+            torrent.peers_seen
+        )));
+        lines.push(Line::from(format!(
+            "Uploaded: {} ({}/s)   ETA: {}",
+            format_bytes(torrent.uploaded_bytes),
+            format_bytes(torrent.upload_speed),
+            torrent.eta.as_deref().unwrap_or("—")
+        )));
+        if !torrent.info_hash.is_empty() {
+            lines.push(Line::from(format!("Info hash: {}", torrent.info_hash)));
+        }
+        lines
+    }
+
     fn progress(&self, progress_bar: bool) -> String {
         if progress_bar {
             if let Some(total) = self.total.filter(|total| *total > 0) {
@@ -120,12 +204,16 @@ impl Widget for DownloadsScreen<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
+        let selected = self.downloads.get(self.selected_row);
+        let is_torrent = selected.is_some_and(|download| download.torrent.is_some());
+        let details_height = if is_torrent { 10 } else { 7 };
+
         let [downloads_area, divider_area, details_area] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(8),
                 Constraint::Length(1),
-                Constraint::Min(7),
+                Constraint::Length(details_height),
             ])
             .areas(inner);
 
@@ -164,28 +252,67 @@ impl Widget for DownloadsScreen<'_> {
             .style(Style::default().fg(Color::DarkGray))
             .render(divider_area, buf);
 
-        let details = self.downloads.get(self.selected_row).map_or_else(
-            || Paragraph::new("No downloads yet"),
-            |download| {
-                Paragraph::new(vec![
-                    Line::from(Span::styled(
-                        "DETAILS",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(Span::styled(
-                        format!("File: {}", download.name),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!("URL: {}", download.url)),
-                    Line::from(format!(
-                        "Progress: {}",
-                        download.progress(self.progress_bar)
-                    )),
-                    Line::from(format!("Destination: {}", download.destination)),
-                ])
-            },
-        );
-        details.render(details_area, buf);
+        let Some(download) = selected else {
+            Paragraph::new("No downloads yet").render(details_area, buf);
+            return;
+        };
+        if !is_torrent {
+            Paragraph::new(download.detail_lines(self.progress_bar)).render(details_area, buf);
+            return;
+        }
+
+        let file_count = download.torrent.as_ref().map_or(0, |t| t.files.len());
+        let active = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        let tab_style = |tab| {
+            if self.details_tab == tab {
+                active
+            } else {
+                Style::default().fg(Color::DarkGray)
+            }
+        };
+        let tabs = Line::from(vec![
+            Span::styled("Info", tab_style(DetailsTab::Info)),
+            Span::raw("  "),
+            Span::styled(
+                format!("Files ({file_count})"),
+                tab_style(DetailsTab::Files),
+            ),
+            Span::styled("   [t] switch tab", Style::default().fg(Color::DarkGray)),
+        ]);
+        let [tabs_area, body_area] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .areas(details_area);
+        Paragraph::new(tabs).render(tabs_area, buf);
+
+        match self.details_tab {
+            DetailsTab::Info => {
+                Paragraph::new(download.detail_lines(self.progress_bar)).render(body_area, buf);
+            }
+            DetailsTab::Files => {
+                let lines = download.file_lines();
+                if lines.is_empty() {
+                    Paragraph::new("Waiting for torrent metadata…").render(body_area, buf);
+                    return;
+                }
+                let visible = (body_area.height as usize).saturating_sub(1).max(1);
+                let start = self.files_scroll.min(lines.len().saturating_sub(visible));
+                let end = (start + visible).min(lines.len());
+                let mut shown: Vec<Line> = lines[start..end].to_vec();
+                shown.push(Line::from(Span::styled(
+                    format!(
+                        "{}-{} of {}  [PgUp/PgDn or J/K] scroll",
+                        start + 1,
+                        end,
+                        lines.len()
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                Paragraph::new(shown).render(body_area, buf);
+            }
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 mod store;
 
 use dm_providers::{DestinationKind, DownloadProgress, DownloadRequest, ProgressReporter};
-use dm_ui::screens::downloads::{DownloadEntry, DownloadStatus};
+use dm_ui::screens::downloads::{DownloadEntry, DownloadStatus, TorrentDetails, TorrentFile};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -22,6 +22,7 @@ enum DownloadEvent {
         id: u64,
         received: u64,
         total: Option<u64>,
+        torrent: Option<TorrentDetails>,
     },
     Finished {
         id: u64,
@@ -100,9 +101,10 @@ impl DownloadManager {
                 id,
                 received,
                 total,
+                torrent,
             } => {
                 if let Some(index) = self.index_of(id) {
-                    self.record_progress(index, received, total);
+                    self.record_progress(index, received, total, torrent);
                 }
             }
             DownloadEvent::Finished { id, status } => {
@@ -114,6 +116,7 @@ impl DownloadManager {
                 };
                 entry.status = status.clone();
                 entry.speed = NO_SPEED.to_owned();
+                entry.torrent = None;
                 self.status = format!("{}: {status}", entry.name);
                 self.status_set_at = Instant::now();
                 self.tasks[index] = Task {
@@ -129,13 +132,22 @@ impl DownloadManager {
         self.tasks.iter().position(|task| task.id == id)
     }
 
-    fn record_progress(&mut self, index: usize, received: u64, total: Option<u64>) {
+    fn record_progress(
+        &mut self,
+        index: usize,
+        received: u64,
+        total: Option<u64>,
+        torrent: Option<TorrentDetails>,
+    ) {
         let (Some(entry), Some(task)) = (self.entries.get_mut(index), self.tasks.get_mut(index))
         else {
             return;
         };
         entry.received = received;
         entry.total = total;
+        if torrent.is_some() {
+            entry.torrent = torrent;
+        }
 
         let now = Instant::now();
         let (sampled_at, sampled_bytes) = *task.speed_sample.get_or_insert((now, received));
@@ -197,6 +209,7 @@ impl DownloadManager {
             status: DownloadStatus::Downloading,
             url: input,
             destination: destination.display().to_string(),
+            torrent: None,
         });
         let id = self.next_task_id;
         self.next_task_id += 1;
@@ -275,6 +288,7 @@ impl DownloadManager {
                     id,
                     received: progress.received_bytes,
                     total: progress.total_bytes,
+                    torrent: progress.torrent.map(torrent_details),
                 });
             });
             let result = match provider {
@@ -326,6 +340,29 @@ impl DownloadManager {
 impl Drop for DownloadManager {
     fn drop(&mut self) {
         let _ = store::save(&self.entries);
+    }
+}
+
+fn torrent_details(info: dm_providers::TorrentInfo) -> TorrentDetails {
+    TorrentDetails {
+        info_hash: info.info_hash,
+        seeders: info.seeders,
+        leechers: info.leechers,
+        connecting: info.connecting,
+        queued: info.queued,
+        peers_seen: info.peers_seen,
+        uploaded_bytes: info.uploaded_bytes,
+        upload_speed: info.upload_speed,
+        eta: info.eta,
+        files: info
+            .files
+            .into_iter()
+            .map(|file| TorrentFile {
+                path: file.path,
+                size: file.size,
+                downloaded: file.downloaded,
+            })
+            .collect(),
     }
 }
 

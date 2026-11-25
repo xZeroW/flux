@@ -154,6 +154,7 @@ impl DownloadProvider for MediaFire {
                 progress(DownloadProgress {
                     received_bytes: received,
                     total_bytes: total,
+                    torrent: None,
                 });
             },
         )

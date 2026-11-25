@@ -1,11 +1,14 @@
 use anyhow::{Context, Result, bail};
-use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Magnet, Session};
+use librqbit::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Magnet, ManagedTorrent, Session,
+    TorrentStats,
+};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::OnceCell;
 
 use crate::{
     DestinationKind, DownloadProgress, DownloadProvider, DownloadRequest, ProgressReporter,
-    ProviderCommand, ResolvedDownload,
+    ProviderCommand, ResolvedDownload, TorrentFileInfo, TorrentInfo,
 };
 
 pub fn commands() -> &'static [ProviderCommand] {
@@ -121,6 +124,7 @@ impl DownloadProvider for TorrentProvider {
                     progress(DownloadProgress {
                         received_bytes: stats.progress_bytes,
                         total_bytes: (stats.total_bytes > 0).then_some(stats.total_bytes),
+                        torrent: Some(torrent_info(&handle, &stats)),
                     });
                     if stats.finished {
                         break;
@@ -132,4 +136,38 @@ impl DownloadProvider for TorrentProvider {
         session.delete(handle.id().into(), false).await?;
         Ok(())
     }
+}
+
+fn torrent_info(handle: &ManagedTorrent, stats: &TorrentStats) -> TorrentInfo {
+    let files = handle
+        .with_metadata(|metadata| {
+            metadata
+                .file_infos
+                .iter()
+                .enumerate()
+                .map(|(index, file)| TorrentFileInfo {
+                    path: file.relative_filename.display().to_string(),
+                    size: file.len,
+                    downloaded: stats.file_progress.get(index).copied().unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut info = TorrentInfo {
+        info_hash: handle.info_hash().as_string(),
+        uploaded_bytes: stats.uploaded_bytes,
+        files,
+        ..TorrentInfo::default()
+    };
+    if let Some(live) = &stats.live {
+        let peers = &live.snapshot.peer_stats;
+        info.seeders = peers.live_seeders;
+        info.leechers = peers.live.saturating_sub(peers.live_seeders);
+        info.connecting = peers.connecting;
+        info.queued = peers.queued;
+        info.peers_seen = peers.seen;
+        info.upload_speed = live.upload_speed.as_bytes();
+        info.eta = live.time_remaining.as_ref().map(ToString::to_string);
+    }
+    info
 }

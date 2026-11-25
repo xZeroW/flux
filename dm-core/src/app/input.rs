@@ -3,7 +3,10 @@ use crate::settings::Settings;
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use dm_providers::ProviderCommand;
-use dm_ui::{screens::Screen, widgets::sidebar::SidebarItem};
+use dm_ui::{
+    screens::{Screen, downloads::DetailsTab},
+    widgets::sidebar::SidebarItem,
+};
 
 impl App {
     pub(super) fn handle_event(&mut self, event: Option<Event>) -> Result<()> {
@@ -72,6 +75,45 @@ impl App {
             {
                 self.confirm_delete = Some(self.selected_download);
             }
+            KeyCode::Char('t')
+                if matches!(self.current_screen, Screen::Downloads)
+                    && self.focus == Focus::Content =>
+            {
+                self.details_tab = match self.details_tab {
+                    DetailsTab::Info => DetailsTab::Files,
+                    DetailsTab::Files => DetailsTab::Info,
+                };
+            }
+            KeyCode::Char('J') | KeyCode::PageDown
+                if matches!(self.current_screen, Screen::Downloads)
+                    && self.focus == Focus::Content
+                    && self.details_tab == DetailsTab::Files =>
+            {
+                let max = self
+                    .downloads
+                    .entries()
+                    .get(self.selected_download)
+                    .and_then(|entry| entry.torrent.as_ref())
+                    .map_or(0, |torrent| torrent.files.len().saturating_sub(1));
+                let step = if key_event.code == KeyCode::PageDown {
+                    5
+                } else {
+                    1
+                };
+                self.files_scroll = (self.files_scroll + step).min(max);
+            }
+            KeyCode::Char('K') | KeyCode::PageUp
+                if matches!(self.current_screen, Screen::Downloads)
+                    && self.focus == Focus::Content
+                    && self.details_tab == DetailsTab::Files =>
+            {
+                let step = if key_event.code == KeyCode::PageUp {
+                    5
+                } else {
+                    1
+                };
+                self.files_scroll = self.files_scroll.saturating_sub(step);
+            }
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::Sidebar => Focus::Content,
@@ -98,12 +140,14 @@ impl App {
             {
                 self.selected_download = (self.selected_download + 1)
                     .min(self.downloads.entries().len().saturating_sub(1));
+                self.files_scroll = 0;
             }
             KeyCode::Char('k') | KeyCode::Up
                 if self.focus == Focus::Content
                     && matches!(self.current_screen, Screen::Downloads) =>
             {
                 self.selected_download = self.selected_download.saturating_sub(1);
+                self.files_scroll = 0;
             }
             KeyCode::Char('j') | KeyCode::Down
                 if self.focus == Focus::Content

@@ -32,10 +32,33 @@ pub struct DownloadRequest {
     pub paused: tokio::sync::watch::Receiver<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadProgress {
     pub received_bytes: u64,
     pub total_bytes: Option<u64>,
+    /// Extra swarm information, only reported by torrents.
+    pub torrent: Option<TorrentInfo>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TorrentFileInfo {
+    pub path: String,
+    pub size: u64,
+    pub downloaded: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TorrentInfo {
+    pub info_hash: String,
+    pub seeders: u32,
+    pub leechers: u32,
+    pub connecting: u32,
+    pub queued: u32,
+    pub peers_seen: u32,
+    pub uploaded_bytes: u64,
+    pub eta: Option<String>,
+    pub upload_speed: u64,
+    pub files: Vec<TorrentFileInfo>,
 }
 
 /// One downloadable file inside a link that points at several (e.g. a folder).

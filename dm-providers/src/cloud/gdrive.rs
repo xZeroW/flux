@@ -109,6 +109,7 @@ impl DownloadProvider for GoogleDrive {
                 progress(DownloadProgress {
                     received_bytes: received,
                     total_bytes: total,
+                    torrent: None,
                 });
             },
         )

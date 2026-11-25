@@ -64,6 +64,7 @@ impl DownloadProvider for DirectDownloadProvider {
                 progress(DownloadProgress {
                     received_bytes: received,
                     total_bytes: total,
+                    torrent: None,
                 });
             },
         )
